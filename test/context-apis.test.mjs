@@ -40,6 +40,25 @@ for (const f of ['injected/toc.js', 'injected/extract.js']) {
   check(`${f} uses no chrome.* APIs`, ns.length === 0, `found: ${ns.join(', ')}`);
 }
 
+// chrome.scripting serialises only the named function. A top-level helper in
+// the same file is invisible in the page, so an entry point that calls one
+// fails at runtime with "not defined".
+for (const f of ['injected/toc.js', 'injected/extract.js', 'injected/fetch-image.js']) {
+  const src = fs.readFileSync(path.join(ext, f), 'utf8');
+  const topLevel = [...src.matchAll(/^(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)].map((m) => m[1]);
+  for (const name of topLevel) {
+    const start = src.search(new RegExp(`^(?:async\\s+)?function\\s+${name}\\b`, 'm'));
+    const rest = src.slice(start);
+    // Body ends where the next top-level declaration begins.
+    const nextIdx = rest.slice(1).search(/^(?:async\s+)?function\s+/m);
+    const body = nextIdx === -1 ? rest : rest.slice(0, nextIdx + 1);
+    const siblings = topLevel.filter((n) => n !== name);
+    const used = siblings.filter((n) => new RegExp(`\\b${n}\\s*\\(`).test(body));
+    check(`${f}: ${name} is self-contained`, used.length === 0,
+      `calls sibling(s) that will not be injected: ${used.join(', ')}`);
+  }
+}
+
 // Everything the service worker touches must be declared in the manifest.
 const manifest = JSON.parse(fs.readFileSync(path.join(ext, 'manifest.json'), 'utf8'));
 const granted = new Set([...manifest.permissions, 'runtime', 'action', 'i18n']);

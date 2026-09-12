@@ -10,11 +10,10 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { loadInjected } from './inject.mjs';
 
-const src = fs.readFileSync(
-  path.resolve(import.meta.dirname, '..', 'extension', 'injected', 'extract.js'),
-  'utf8',
-);
+const EXTRACT_JS = path.resolve(
+  import.meta.dirname, '..', 'extension', 'injected', 'extract.js');
 
 const HTML = `<!doctype html><html><head><title>Chapter Fixture</title>
 <style>.para { color: red }</style></head>
@@ -77,19 +76,16 @@ Object.defineProperty(window.HTMLElement.prototype, 'innerText', {
   get() { return this.textContent; },
 });
 
-const ctx = {
+// Injected the way chrome.scripting delivers it: this function's source alone.
+const extract = loadInjected(EXTRACT_JS, 'yuzuExtractSection', {
   window, document: window.document, Node: window.Node,
   NodeFilter: window.NodeFilter, XMLSerializer: window.XMLSerializer,
   Event: window.Event, Object, Math, Date, Promise, setTimeout, console,
   Array, String, Map, Set, JSON, RegExp, Error, TypeError, URL,
-};
-vm.createContext(ctx);
-vm.runInContext(src, ctx, { filename: 'extract.js' });
+});
 
-const out = await vm.runInContext(
-  'yuzuExtractSection({ settleMs: 60, maxSettleMs: 900, scrollStepMs: 1, imageTimeoutMs: 100 })',
-  ctx,
-);
+const out = await extract.call(
+  { settleMs: 60, maxSettleMs: 900, scrollStepMs: 1, imageTimeoutMs: 100 });
 
 // ---------------------------------------------------------------------------
 let pass = 0, fail = 0;

@@ -10,9 +10,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { loadInjected } from './inject.mjs';
 
-const src = fs.readFileSync(
-  path.resolve(import.meta.dirname, '..', 'extension', 'injected', 'toc.js'), 'utf8');
+const TOC_JS = path.resolve(import.meta.dirname, '..', 'extension', 'injected', 'toc.js');
 
 const HTML = `<!doctype html><html lang="en"><head><title>Yuzu: Fixture Book</title></head>
 <body>
@@ -61,13 +61,13 @@ doc.getElementById('part1-toggle').addEventListener('click', function () {
 // Expand-all is a no-op here, so the per-node pass has real work to do.
 doc.querySelector('[data-interaction-id="toc_expand_all"]').addEventListener('click', () => {});
 
-const ctx = {
+// Injected exactly as chrome.scripting delivers it: this function's source
+// alone, with nothing else from the file in scope.
+const readToc = loadInjected(TOC_JS, 'yuzuReadToc', {
   window, document: doc, location: window.location,
   Object, Math, Date, Promise, setTimeout, console, Array, String, Map, Set, JSON, RegExp, Error,
-};
-vm.createContext(ctx);
-vm.runInContext(src, ctx, { filename: 'toc.js' });
-const toc = await vm.runInContext('yuzuReadToc()', ctx);
+});
+const toc = await readToc.call();
 
 let fail = 0;
 const check = (n, c, d) => {
@@ -100,13 +100,11 @@ check('Part flagged as a parent', toc.entries[2].isPart === true);
 // Navigation must refuse to click once the reader has left the book.
 const gone = new JSDOM('<!doctype html><html><body><p>Whitelabel Error Page</p></body></html>',
   { url: 'https://sso.bncollege.com/bes-idp/logout?pub=x' });
-const ctx2 = {
+const gotoGone = loadInjected(TOC_JS, 'yuzuGotoSection', {
   window: gone.window, document: gone.window.document, location: gone.window.location,
   Object, Math, Date, Promise, setTimeout, console, Array, String, Map, Set, JSON, RegExp, Error,
-};
-vm.createContext(ctx2);
-vm.runInContext(src, ctx2, { filename: 'toc.js' });
-const navGone = await vm.runInContext('yuzuGotoSection("tocIndex3")', ctx2);
+});
+const navGone = await gotoGone.call('tocIndex3');
 check('navigation refuses on a non-reader page', !!navGone.error, JSON.stringify(navGone));
 
 console.log(fail ? `\n  ${fail} failed` : '\n  all toc checks passed');

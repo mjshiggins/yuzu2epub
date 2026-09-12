@@ -12,50 +12,50 @@
  */
 
 /**
- * The reader keeps each TOC entry's source document path on its React fiber.
- * Having it up front lets the driver skip re-extracting a document two entries
- * share, and lets it verify it landed on the document it asked for.
- *
- * Reading React internals is inherently fragile, so this returns '' on any
- * change and every caller treats the path as optional.
- */
-function tocSourcePath(el) {
-  try {
-    const fk = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
-    if (!fk) return '';
-    let f = el[fk];
-    for (let i = 0; i < 14 && f; i++) {
-      const mp = f.memoizedProps;
-      if (mp && typeof mp === 'object') {
-        for (const k of ['toc', 'tocItem', 'item', 'node']) {
-          const o = mp[k];
-          if (o && typeof o === 'object' && typeof o.path === 'string' && o.path) return o.path;
-        }
-      }
-      f = f.return;
-    }
-  } catch (_) { /* React internals moved; carry on without it */ }
-  return '';
-}
-
-function tocPanelContains(control, tocRoot) {
-  // Accept a control only if it and the TOC list share a near ancestor, which
-  // keeps us inside the TOC panel and out of the reader's header menus.
-  let box = tocRoot;
-  for (let i = 0; i < 4 && box; i++) {
-    if (box.contains(control)) return true;
-    box = box.parentElement;
-  }
-  return false;
-}
-
-/**
  * Read the full table of contents, expanding every collapsed Part first.
  * @returns {Promise<{error?: string, isbn?: string, title?: string,
  *                    authors?: string[], entries?: Array}>}
  */
 async function yuzuReadToc() {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // These helpers MUST live inside this function. chrome.scripting.executeScript
+  // serialises only the function it is given; anything at module scope simply
+  // does not exist in the page, and the call fails with "not defined".
+  function tocPanelContains(control, tocRoot) {
+    // Accept a control only if it and the TOC list share a near ancestor, which
+    // keeps us inside the TOC panel and out of the reader's header menus.
+    let box = tocRoot;
+    for (let i = 0; i < 4 && box; i++) {
+      if (box.contains(control)) return true;
+      box = box.parentElement;
+    }
+    return false;
+  }
+
+  // The reader keeps each TOC entry's source document path on its React fiber.
+  // Having it up front lets the driver verify it landed on the document it
+  // asked for. React internals are fragile, so this returns '' on any change
+  // and every caller treats the path as optional.
+  function tocSourcePath(el) {
+    try {
+      const fk = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
+      if (!fk) return '';
+      let f = el[fk];
+      for (let i = 0; i < 14 && f; i++) {
+        const mp = f.memoizedProps;
+        if (mp && typeof mp === 'object') {
+          for (const k of ['toc', 'tocItem', 'item', 'node']) {
+            const o = mp[k];
+            if (o && typeof o === 'object' && typeof o.path === 'string' && o.path) return o.path;
+          }
+        }
+        f = f.return;
+      }
+    } catch (_) { /* React internals moved; carry on without it */ }
+    return '';
+  }
+
 
   try {
     // The TOC panel must be open for its list to exist in the DOM.

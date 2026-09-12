@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { loadInjected } from './inject.mjs';
 
 const ext = path.resolve(import.meta.dirname, '..', 'extension');
 
@@ -36,7 +37,7 @@ function sectionHtml(n, withMath) {
   </body></html>`;
 }
 
-const extractSrc = fs.readFileSync(path.join(ext, 'injected', 'extract.js'), 'utf8');
+const EXTRACT_JS = path.join(ext, 'injected', 'extract.js');
 
 async function extractOne(html, url) {
   const dom = new JSDOM(html, { url });
@@ -44,15 +45,12 @@ async function extractOne(html, url) {
   Object.defineProperty(window.HTMLElement.prototype, 'innerText', {
     get() { return this.textContent; }, configurable: true,
   });
-  const ctx = {
+  const injected = loadInjected(EXTRACT_JS, 'yuzuExtractSection', {
     window, document: window.document, Node: window.Node, NodeFilter: window.NodeFilter,
     XMLSerializer: window.XMLSerializer, Event: window.Event,
     Object, Math, Date, Promise, setTimeout, console, Array, String, Map, Set, JSON, RegExp, Error, TypeError, URL,
-  };
-  vm.createContext(ctx);
-  vm.runInContext(extractSrc, ctx, { filename: 'extract.js' });
-  return vm.runInContext(
-    'yuzuExtractSection({settleMs:40,maxSettleMs:600,scrollStepMs:1,imageTimeoutMs:60})', ctx);
+  });
+  return injected.call({ settleMs: 40, maxSettleMs: 600, scrollStepMs: 1, imageTimeoutMs: 60 });
 }
 
 // --- extract three sections, shaped like Part -> two chapters --------------
