@@ -4,3 +4,7 @@
 node_modules/
 out/
 package-lock.json
+
+# Scratch folder the Claude desktop app drops files into. Kept out of
+# the repo so nothing extracted from a book can be committed by accident.
+Claude outputs/
