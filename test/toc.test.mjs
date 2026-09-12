@@ -104,8 +104,104 @@ const gotoGone = loadInjected(TOC_JS, 'yuzuGotoSection', {
   window: gone.window, document: gone.window.document, location: gone.window.location,
   Object, Math, Date, Promise, setTimeout, console, Array, String, Map, Set, JSON, RegExp, Error,
 });
-const navGone = await gotoGone.call('tocIndex3');
+const navGone = await gotoGone.call({ uuid: 'tocIndex3', label: 'Go to 1 First Chapter, page 3', title: '1 First Chapter' }, 5);
 check('navigation refuses on a non-reader page', !!navGone.error, JSON.stringify(navGone));
+
+
+// ---------------------------------------------------------------------------
+// Recovery: the TOC collapsed back to its top-level rows mid-run.
+//
+// This is the failure that cost a real run. The reader remounted the panel to
+// its collapsed state (12 rows out of 741), the driver kept looking up the
+// positional data-uuid it had captured hours earlier, found nothing, and raced
+// through every remaining section reporting "not found".
+// ---------------------------------------------------------------------------
+function collapsedDom() {
+  const dom = new JSDOM(`<!doctype html><html><head><title>Yuzu: Book</title></head><body>
+    <div id="toc-panel">
+      <button data-interaction-id="toc_expand_all" type="button">Expand all</button>
+      <ul id="toc">
+        <li><div><button data-uuid="tocIndex0" aria-current="false" aria-label="Go to Cover, page i"><span>Cover</span></button></div></li>
+        <li>
+          <div><button data-uuid="tocIndex1" aria-current="false" aria-label="Go to Part I, page 1"><span>Part I</span></button></div>
+          <button id="toggle" aria-expanded="false" data-interaction-id="toc_expand">t</button>
+          <ul id="kids" hidden></ul>
+        </li>
+      </ul>
+    </div>
+  </body></html>`, { url: 'https://reader.yuzu.com/reader/books/9780000000000/epubcfi/x' });
+  const d = dom.window.document;
+  const clicked = [];
+  // Expanding reveals the two chapters, exactly as the real reader does.
+  const reveal = () => {
+    d.getElementById('toggle').setAttribute('aria-expanded', 'true');
+    const kids = d.getElementById('kids');
+    kids.hidden = false;
+    kids.innerHTML = `
+      <li><div><button data-uuid="tocIndex2" aria-current="false" aria-label="Go to 1 First Chapter, page 3"><span>1</span></button></div></li>
+      <li><div><button data-uuid="tocIndex3" aria-current="false" aria-label="Go to 2 Second Chapter, page 39"><span>2</span></button></div></li>`;
+    for (const b of kids.querySelectorAll('button')) {
+      b.addEventListener('click', function () {
+        clicked.push(this.getAttribute('aria-label'));
+        this.setAttribute('aria-current', 'true');
+      });
+    }
+  };
+  d.getElementById('toggle').addEventListener('click', reveal);
+  d.querySelector('[data-interaction-id="toc_expand_all"]').addEventListener('click', reveal);
+  return { dom, d, clicked };
+}
+
+function gotoIn(d, win) {
+  return loadInjected(TOC_JS, 'yuzuGotoSection', {
+    window: win, document: d, location: win.location,
+    Object, Math, Date, Promise, setTimeout, console, Array, String, Map, Set, JSON, RegExp, Error,
+  });
+}
+
+{
+  const { dom, d, clicked } = collapsedDom();
+  const goto = gotoIn(d, dom.window);
+  const res = await goto.call(
+    { uuid: 'tocIndex3', label: 'Go to 2 Second Chapter, page 39', title: '2 Second Chapter' },
+    4,
+  );
+  check('recovers from a collapsed TOC', res.ok === true, JSON.stringify(res));
+  check('reports that it had to recover', res.recovered === true, JSON.stringify(res));
+  check('clicked the right entry after re-expanding',
+    clicked.length === 1 && clicked[0] === 'Go to 2 Second Chapter, page 39',
+    JSON.stringify(clicked));
+}
+
+{
+  // A stale positional uuid must never win over the label. Here tocIndex3 is
+  // present but is a different row than the one captured.
+  const { dom, d, clicked } = collapsedDom();
+  d.getElementById('toggle').click();
+  await new Promise((r) => setTimeout(r, 10));
+  d.querySelector('button[data-uuid="tocIndex3"]').setAttribute('aria-label', 'Go to Something Else, page 99');
+  const goto = gotoIn(d, dom.window);
+  const res = await goto.call(
+    { uuid: 'tocIndex3', label: 'Go to 1 First Chapter, page 3', title: '1 First Chapter' },
+    4,
+  );
+  check('label beats a stale positional uuid',
+    clicked.length === 1 && clicked[0] === 'Go to 1 First Chapter, page 3',
+    `clicked ${JSON.stringify(clicked)} / ${JSON.stringify(res)}`);
+}
+
+{
+  // Genuinely absent entry: report it, do not click something at random.
+  const { dom, d, clicked } = collapsedDom();
+  const goto = gotoIn(d, dom.window);
+  const res = await goto.call(
+    { uuid: 'tocIndex9', label: 'Go to Missing Chapter, page 999', title: 'Missing Chapter' },
+    4,
+  );
+  check('missing entry reports an error', !!res.error, JSON.stringify(res));
+  check('missing entry clicks nothing', clicked.length === 0, JSON.stringify(clicked));
+  check('error names what was rendered', /rows rendered/.test(res.error || ''), res.error);
+}
 
 console.log(fail ? `\n  ${fail} failed` : '\n  all toc checks passed');
 process.exit(fail ? 1 : 0);

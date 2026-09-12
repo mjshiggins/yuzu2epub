@@ -245,6 +245,7 @@ async function downloadBlob(blob, filename) {
 // Extraction
 // ---------------------------------------------------------------------------
 const CHECKPOINT_EVERY = 3;
+const MAX_CONSECUTIVE_NAV_FAILURES = 5;
 
 async function extractBook(tabId, prior, isbn) {
   setState({ phase: 'Reading table of contents' });
@@ -301,6 +302,8 @@ async function extractBook(tabId, prior, isbn) {
     }
   };
 
+  let consecutiveNavFailures = 0;
+
   for (let i = start; i < toc.entries.length; i++) {
     if (state.cancelled) {
       await save(i, false);
@@ -322,10 +325,28 @@ async function extractBook(tabId, prior, isbn) {
       etaMinutes: estimateRemaining(i, toc.entries.length),
     });
 
-    const nav = await runInTop(tabId, yuzuGotoSection, [entry.uuid]);
+    const nav = await runInTop(tabId, yuzuGotoSection, [entry, toc.entries.length]);
     if (!nav || nav.error) {
       warn(`Could not open "${entry.title}": ${(nav && nav.error) || 'unknown error'}`);
+      consecutiveNavFailures++;
+      // A run that cannot reach the table of contents any more will fail on
+      // every remaining entry. Racing through hundreds of them produces a
+      // wall of identical warnings and a half a book, so stop and let the
+      // checkpoint be resumed instead.
+      if (consecutiveNavFailures >= MAX_CONSECUTIVE_NAV_FAILURES) {
+        await save(i, false);
+        throw new Error(
+          `Navigation failed on ${consecutiveNavFailures} sections in a row, stopping at ` +
+          `section ${i + 1} of ${toc.entries.length}. The reader's table of contents is no ` +
+          `longer reachable, usually because the page reloaded or the session dropped. ` +
+          `Reopen the book and press Resume.`,
+        );
+      }
       continue;
+    }
+    consecutiveNavFailures = 0;
+    if (nav.recovered) {
+      warn(`Table of contents had collapsed; re-expanded it to reach "${entry.title}".`);
     }
     await sleep(900);
 
