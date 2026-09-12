@@ -348,13 +348,13 @@ async function extractBook(tabId, prior, isbn) {
     if (nav.recovered) {
       warn(`Table of contents had collapsed; re-expanded it to reach "${entry.title}".`);
     }
+    await sleep(900);
+
     let payload = null;
     for (let attempt = 0; attempt < 3 && !payload; attempt++) {
       if (attempt) await sleep(1500 * attempt);
       try {
-        // Passing the expected document lets the extractor wait for the frame
-        // to actually swap, instead of the driver sleeping a fixed interval.
-        payload = await extractBestFrame(tabId, { expectPath: entry.path || '' });
+        payload = await extractBestFrame(tabId, {});
       } catch (err) {
         warn(`Extraction error on "${entry.title}" (attempt ${attempt + 1}): ${err.message}`);
       }
