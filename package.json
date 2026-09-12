@@ -1,5 +1,14 @@
 {
-  "dependencies": {
+  "name": "yuzu2epub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that turns a purchased Yuzu textbook into a single Kindle-ready EPUB. The extension itself needs no build step; these dev dependencies exist only to run the tests.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node test/extract.test.mjs && node test/pipeline.test.mjs && node test/build-fixture.mjs && python3 test/validate_epub.py test/fixture.epub && python3 test/validate_epub.py test/pipeline.epub",
+    "check": "for f in extension/*.js extension/lib/*.js extension/injected/*.js; do node --check \"$f\" || exit 1; done && echo 'syntax ok'"
+  },
+  "devDependencies": {
     "jsdom": "^30.0.1"
   }
 }
