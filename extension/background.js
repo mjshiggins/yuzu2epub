@@ -277,7 +277,11 @@ async function extractBook(tabId, prior, key) {
       page: entry.page,
       body: payload.xhtml,
       images: payload.images || [],
+      links: payload.links || [],
       pages: payload.pages || [],
+      // The document URL this section came from. The assembler matches link
+      // targets against these to turn cross-section links into real ones.
+      sourceUrl: payload.baseURI || '',
       hasMathML: !!payload.hasMathML,
       hasSvg: !!payload.hasSvg,
     });
@@ -403,6 +407,7 @@ async function runJob(tabId, { fresh = false } = {}) {
     resumableComplete: false,
     message:
       `${job.sections.length} sections, ${result.imageCount} images, ` +
+      `${result.linksResolved} cross-references linked, ` +
       `${(result.blob.size / 1048576).toFixed(1)} MB` +
       (result.failedImages ? `, ${result.failedImages} images unavailable` : ''),
   });

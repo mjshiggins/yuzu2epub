@@ -40,6 +40,99 @@ function extForMedia(m) {
   }
 }
 
+/** Document identity for link matching: origin + path, no query or fragment. */
+function docKey(url) {
+  try {
+    const u = new URL(url);
+    return u.origin + u.pathname;
+  } catch (_) {
+    return '';
+  }
+}
+
+function baseName(url) {
+  const k = docKey(url);
+  const i = k.lastIndexOf('/');
+  return i >= 0 ? k.slice(i + 1) : k;
+}
+
+/**
+ * Turn in-book link tokens into real in-EPUB links.
+ *
+ * A link from one section to another is recorded during extraction as an
+ * absolute URL, because the target section may not have been extracted yet.
+ * Now that every section has a filename, match those URLs against the document
+ * each section came from and rewrite. This is what makes the book's own
+ * printed Contents page navigable instead of a dead list of chapter names.
+ *
+ * Anything still unresolved has its anchor unwrapped, keeping the text but
+ * dropping a link that would go nowhere.
+ */
+function resolveLinks(sections, warnings) {
+  const byUrl = new Map();
+  const byName = new Map();
+  for (const s of sections) {
+    if (!s.sourceUrl) continue;
+    const k = docKey(s.sourceUrl);
+    if (k && !byUrl.has(k)) byUrl.set(k, s.filename);
+    const n = baseName(s.sourceUrl);
+    // Only keep unambiguous basenames as a fallback.
+    if (n) byName.set(n, byName.has(n) ? null : s.filename);
+  }
+
+  let resolved = 0;
+  let dropped = 0;
+
+  for (const s of sections) {
+    for (const link of s.links || []) {
+      const tok = escapeRe(link.token);
+      let target = byUrl.get(docKey(link.url));
+      if (!target) {
+        const alt = byName.get(baseName(link.url));
+        if (alt) target = alt;
+      }
+
+      if (target) {
+        let frag = '';
+        try {
+          frag = new URL(link.url).hash || '';
+        } catch (_) {
+          frag = '';
+        }
+        // Sections all live in the same directory, so a bare filename is the
+        // correct relative reference.
+        const href = target.replace(/^text\//, '') + frag;
+        if (target === s.filename && frag) {
+          // A link back into the same document: the fragment alone is enough.
+          s.body = s.body.replace(new RegExp(`"${tok}"`, 'g'), `"${frag}"`);
+        } else {
+          s.body = s.body.replace(new RegExp(`"${tok}"`, 'g'), `"${href}"`);
+        }
+        resolved++;
+      } else {
+        // Unwrap: anchors cannot nest, so matching to the first </a> is safe.
+        s.body = s.body.replace(
+          new RegExp(`<a[^>]*href="${tok}"[^>]*>([\\s\\S]*?)</a>`, 'g'),
+          '$1',
+        );
+        // Any leftover self-closing or attribute-only remnant.
+        s.body = s.body.replace(new RegExp(`"${tok}"`, 'g'), '"#"');
+        dropped++;
+      }
+    }
+    delete s.links;
+    delete s.sourceUrl;
+  }
+
+  if (dropped) {
+    warnings.push(
+      `${dropped} in-book link${dropped === 1 ? '' : 's'} could not be matched to a ` +
+      `section and were turned into plain text.`,
+    );
+  }
+  return { resolved, dropped };
+}
+
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -156,6 +249,9 @@ async function assembleEpub(job, tabId, onProgress) {
     delete s.images;
   }
 
+  report('Resolving cross-references');
+  const linkStats = resolveLinks(sections, warnings);
+
   let cover = null;
   if (meta.coverUrl) {
     report('Fetching cover art');
@@ -185,6 +281,8 @@ async function assembleEpub(job, tabId, onProgress) {
     filename: `${self.YuzuXml.slugify(meta.title || 'yuzu-book')}.epub`,
     imageCount: images.length,
     failedImages: failed.size,
+    linksResolved: linkStats.resolved,
+    linksDropped: linkStats.dropped,
     warnings,
   };
 }

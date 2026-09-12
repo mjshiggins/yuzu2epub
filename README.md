@@ -85,6 +85,31 @@ document **through the Cache API** (extension messaging is JSON-only and cannot
 carry binary), turned into a blob URL there, and downloaded by the service
 worker. `test/context-apis.test.mjs` enforces all of this statically.
 
+### Two tables of contents
+
+There are two, and both have to be right.
+
+The **generated navigation** is `nav.xhtml` plus a `toc.ncx` fallback, carrying
+the Part and Chapter hierarchy. `nav.xhtml` is in the spine, not just the
+manifest: EPUB 3 allows a nav document outside the reading order, but Kindle's
+"Go to -> Table of Contents" is unreliable when the TOC is not a real page. The
+deprecated EPUB 2 `<guide>` is emitted alongside `landmarks`, because Kindle's
+older ingestion path and KDP still read it.
+
+The **book's own printed Contents page** is extracted like any other section,
+and its chapter links have to be made live. During extraction an in-book link
+is replaced with a token recording its absolute target, because the section it
+points at may not have been extracted yet. Once every section has a filename,
+the assembler matches those targets against the document each section came from
+and rewrites them, fragments included. Without this the Contents page of a
+709 page textbook is a dead list of chapter names.
+
+Two things that cost real content before they were caught: `<nav>` was being
+stripped as reader chrome, which deletes the printed Contents page outright,
+and `<header>` was being dropped wholesale, which takes chapter titles with it.
+Neither is treated as chrome any more. Reader chrome is now identified by
+explicit ARIA roles and class hints only.
+
 ### Safety rule: never click outside the TOC
 
 Section navigation works by clicking the reader's own controls, so the blast
@@ -143,9 +168,10 @@ the assistive MathML is used instead.
 
 ## Known limits
 
-- **Cross-section links are unwrapped.** A link from Chapter 3 into Chapter 9
-  becomes plain text. Yuzu's internal spine filenames do not map onto our
-  section files. Links inside a single section still work.
+- **Cross-section links that point outside the TOC become plain text.** Links
+  are matched against the document each section was extracted from, so anything
+  the TOC did not cover has no section to point at. Matched links, which is the
+  overwhelming majority, work normally.
 - **Page-list granularity depends on the book.** Where the source EPUB carries
   page-break markers, "go to page" matches the print edition exactly. Where it
   does not, there is one entry per section.

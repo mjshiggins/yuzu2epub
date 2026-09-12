@@ -171,8 +171,7 @@ async function yuzuExtractSection(opts) {
   const DROP = new Set([
     'SCRIPT', 'STYLE', 'LINK', 'META', 'IFRAME', 'FRAME', 'OBJECT', 'EMBED',
     'FORM', 'INPUT', 'BUTTON', 'SELECT', 'TEXTAREA', 'LABEL', 'CANVAS',
-    'VIDEO', 'AUDIO', 'NOSCRIPT', 'TEMPLATE', 'DIALOG', 'NAV', 'HEADER',
-    'FOOTER', 'MENU',
+    'VIDEO', 'AUDIO', 'NOSCRIPT', 'TEMPLATE', 'DIALOG',
   ]);
 
   const KEEP_TAGS = new Set([
@@ -188,8 +187,10 @@ async function yuzuExtractSection(opts) {
 
   const KEEP_ATTRS = new Set(['href', 'src', 'alt', 'title', 'id', 'colspan', 'rowspan', 'dir', 'lang']);
 
+  // Reader chrome only. Deliberately no bare 'nav', 'header' or 'footer':
+  // those are ordinary book markup in a content document. Explicit ARIA roles
+  // are kept because the reader sets them and publisher content rarely does.
   const UI_SELECTORS = [
-    'nav', 'header:not(section header)', 'footer',
     '[class*="toolbar"]', '[class*="Toolbar"]',
     '[class*="sidebar"]', '[class*="Sidebar"]',
     '[class*="toast"]', '[class*="Toast"]',
@@ -207,6 +208,7 @@ async function yuzuExtractSection(opts) {
   const PRINT_WARNING = 'To print, please use the print page range feature within the application.';
 
   const images = [];
+  const links = [];
   const pages = [];
   const seenImg = new Map();
   let hasMathML = false;
@@ -403,16 +405,35 @@ async function yuzuExtractSection(opts) {
 
       if (tag === 'A') {
         const href = el.getAttribute('href') || '';
-        // External links and same-section anchors survive. Links into other
-        // spine items cannot be resolved (Yuzu's internal filenames do not map
-        // onto our section files), so unwrap them rather than leave a dead
-        // href behind. See "Known limits" in the README.
-        if (href && !/^(https?:|mailto:|#)/i.test(href)) {
-          walk(el);
-          const frag = doc.createDocumentFragment();
-          while (el.firstChild) frag.appendChild(el.firstChild);
-          el.replaceWith(frag);
-          continue;
+        // Same-section anchors and mail/tel links pass through untouched.
+        if (href && !/^(#|mailto:|tel:|javascript:)/i.test(href)) {
+          let abs = null;
+          try {
+            abs = new URL(href, doc.baseURI);
+          } catch (_) {
+            abs = null;
+          }
+          let base = null;
+          try {
+            base = new URL(doc.baseURI);
+          } catch (_) {
+            base = null;
+          }
+          if (!abs) {
+            el.removeAttribute('href');
+          } else if (base && abs.origin === base.origin) {
+            // A link into another part of the book. It cannot be resolved to
+            // an in-EPUB path yet, because the section it points at may not
+            // have been extracted. Record the absolute target and let the
+            // assembler rewrite it once every section has a filename. This is
+            // what makes the book's own printed Contents page work.
+            const token = `__Y2E_LINK_${links.length + 1}__`;
+            links.push({ token, url: abs.href });
+            el.setAttribute('href', token);
+          } else {
+            // Genuinely external: keep it absolute.
+            el.setAttribute('href', abs.href);
+          }
         }
       }
 
@@ -463,6 +484,7 @@ async function yuzuExtractSection(opts) {
     score: best,
     xhtml,
     images: images.map((i) => ({ url: i.url, token: i.token })),
+    links,
     pages,
     hasMathML,
     hasSvg,

@@ -69,7 +69,7 @@ function navList(nodes, indent, esc) {
   return out;
 }
 
-function navDoc(lang, tree, pageList, esc) {
+function navDoc(lang, tree, pageList, esc, hasCover) {
   const first = tree[0] ? tree[0].section.filename : 'text/section-0001.xhtml';
   let pages = '';
   if (pageList.length) {
@@ -94,7 +94,7 @@ function navDoc(lang, tree, pageList, esc) {
 ${navList(tree, 2, esc)}  </nav>
 ${pages}  <nav epub:type="landmarks" hidden="hidden">
     <ol>
-      <li><a epub:type="toc" href="nav.xhtml">Table of Contents</a></li>
+${hasCover ? '      <li><a epub:type="cover" href="cover.xhtml">Cover</a></li>\n' : ''}      <li><a epub:type="toc" href="nav.xhtml">Table of Contents</a></li>
       <li><a epub:type="bodymatter" href="${first}">Begin Reading</a></li>
     </ol>
   </nav>
@@ -192,6 +192,10 @@ function opfDoc(p, uuid, hasCover, coverHref, coverMediaType, esc, timestamp) {
 
   const spine = [];
   if (hasCover) spine.push('    <itemref idref="cover-page" linear="yes"/>');
+  // The nav document belongs in the reading order. EPUB 3 permits it outside
+  // the spine, but Kindle's "Go to -> Table of Contents" is unreliable when
+  // the TOC is not a real page in the book.
+  spine.push('    <itemref idref="nav" linear="yes"/>');
   for (const s of p.sections) spine.push(`    <itemref idref="${s.id}"/>`);
 
   const creators = (p.authors && p.authors.length ? p.authors : ['Unknown'])
@@ -202,6 +206,17 @@ function opfDoc(p, uuid, hasCover, coverHref, coverMediaType, esc, timestamp) {
     ? `\n    <dc:identifier id="isbn">urn:isbn:${esc(p.isbn)}</dc:identifier>`
     : '';
   const coverMeta = hasCover ? '\n    <meta name="cover" content="cover-image"/>' : '';
+
+  // Deprecated in EPUB 3 but still what Kindle's older ingestion path and KDP
+  // read to find the TOC and cover.
+  const guide = [];
+  if (hasCover) {
+    guide.push('    <reference type="cover" title="Cover" href="cover.xhtml"/>');
+  }
+  guide.push('    <reference type="toc" title="Table of Contents" href="nav.xhtml"/>');
+  if (p.sections.length) {
+    guide.push(`    <reference type="text" title="Begin Reading" href="${p.sections[0].filename}"/>`);
+  }
   const publisher = p.publisher ? `\n    <dc:publisher>${esc(p.publisher)}</dc:publisher>` : '';
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -219,6 +234,9 @@ ${manifest.join('\n')}
   <spine toc="ncx">
 ${spine.join('\n')}
   </spine>
+  <guide>
+${guide.join('\n')}
+  </guide>
 </package>`;
 }
 
@@ -259,7 +277,7 @@ async function buildEpub(p) {
       name: 'OEBPS/content.opf',
       data: opfDoc(p, uuid, hasCover, coverHref, coverMediaType, esc, epubTimestamp()),
     },
-    { name: 'OEBPS/nav.xhtml', data: navDoc(p.language, tree, pageList, esc) },
+    { name: 'OEBPS/nav.xhtml', data: navDoc(p.language, tree, pageList, esc, hasCover) },
     { name: 'OEBPS/toc.ncx', data: ncxDoc(p.language, uuid, p.title, tree, esc) },
     { name: 'OEBPS/style.css', data: self.YuzuStylesheet },
   ];

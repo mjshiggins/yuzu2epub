@@ -81,7 +81,7 @@ const ctx = {
   window, document: window.document, Node: window.Node,
   NodeFilter: window.NodeFilter, XMLSerializer: window.XMLSerializer,
   Event: window.Event, Object, Math, Date, Promise, setTimeout, console,
-  Array, String, Map, Set, JSON, RegExp, Error, TypeError,
+  Array, String, Map, Set, JSON, RegExp, Error, TypeError, URL,
 };
 vm.createContext(ctx);
 vm.runInContext(src, ctx, { filename: 'extract.js' });
@@ -131,8 +131,12 @@ check('pagebreak has epub:type', /epub:type="pagebreak"/.test(x));
 
 check('in-section anchor kept', /href="#local-anchor"/.test(x));
 check('external link kept', /href="https:\/\/example\.com\/x"/.test(x));
-check('cross-section link unwrapped, text kept',
-  !/chapter9\.xhtml/.test(x) && /cross-section link/.test(x));
+check('cross-section link tokenised for later resolution',
+  /href="__Y2E_LINK_1__"/.test(x) && /cross-section link/.test(x));
+check('link token records the absolute target',
+  out.links.length === 1
+  && out.links[0].url === 'https://jigsaw.yuzu.com/books/chapter9.xhtml#sec2',
+  JSON.stringify(out.links));
 
 check('MathJax SVG used', /<svg/.test(x));
 check('glyph defs inlined', /MJX-GLYPH-A/.test(x) && /<defs/.test(x));
