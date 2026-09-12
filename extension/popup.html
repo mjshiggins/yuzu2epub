@@ -71,7 +71,8 @@
   <div class="panel" id="panel">
     <div id="idle">
       <button id="start">Build EPUB</button>
-      <div class="muted hint">
+      <button class="secondary" id="fresh" hidden>Discard and re-extract</button>
+      <div class="muted hint" id="hint">
         Walks the whole table of contents and saves one EPUB with a nested
         Part and Chapter index. Expect 10 to 25 minutes for a full textbook.
         Leave the tab open.
@@ -93,7 +94,8 @@
 
     <div id="failed" hidden>
       <div class="err" id="errmsg"></div>
-      <button class="secondary" id="retry">Try again</button>
+      <button id="retry">Try again</button>
+      <div class="muted hint" id="retryhint"></div>
     </div>
 
     <div class="warn" id="warnings"></div>

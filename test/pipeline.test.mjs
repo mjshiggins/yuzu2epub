@@ -70,43 +70,53 @@ for (let i = 0; i < specs.length; i++) {
   });
 }
 
-// --- replicate the offscreen assembler's token rewriting -------------------
-const byUrl = new Map();
-for (const s of sections) {
-  for (const img of s.images) {
-    if (!byUrl.has(img.url)) {
-      const n = String(byUrl.size + 1).padStart(4, '0');
-      byUrl.set(img.url, { id: `img-${n}`, href: `images/img-${n}.png`, mediaType: 'image/png' });
-    }
-  }
-}
-const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-for (const s of sections) {
-  for (const img of s.images) {
-    s.body = s.body.replace(new RegExp(esc(img.token), 'g'), `../${byUrl.get(img.url).href}`);
-  }
-  delete s.images;
-}
-
-const png = Uint8Array.from(Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64'));
-const images = [...byUrl.values()].map((a) => ({ ...a, data: png }));
-
-// --- build with the real builder ------------------------------------------
+// --- run the real assembler, with fetch and chrome.* stubbed --------------
 const ctx = {
   self: {}, console, TextEncoder, TextDecoder, Response, CompressionStream,
-  Blob, DataView, Uint8Array, ArrayBuffer, Date, Math, crypto, JSON, String, Array, Object, Number,
+  Blob, DataView, Uint8Array, ArrayBuffer, Date, Math, crypto, JSON, String,
+  Array, Object, Number, Promise, Map, Set, RegExp, Error, URL, atob, setTimeout,
 };
 vm.createContext(ctx);
-for (const f of ['zip.js', 'xml.js', 'stylesheet.js', 'epub.js']) {
+for (const f of ['zip.js', 'xml.js', 'stylesheet.js', 'epub.js', 'assemble.js']) {
   vm.runInContext(fs.readFileSync(path.join(ext, 'lib', f), 'utf8'), ctx, { filename: f });
 }
-const blob = await ctx.self.YuzuEpub.buildEpub({
-  title: 'Pipeline Fixture', authors: ['A. Author'], language: 'en',
-  isbn: '9780000000001', sections, images,
-  cover: { data: png, mediaType: 'image/png' },
-});
+
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64');
+
+// One URL always fails, to prove a missing image degrades instead of breaking
+// the build with a dangling manifest reference.
+const FAILING = 'https://jigsaw.yuzu.com/img/only-3.png';
+let fetchCalls = 0;
+ctx.fetch = async (url) => {
+  fetchCalls++;
+  if (url === FAILING) return { ok: false, status: 404, headers: { get: () => null } };
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: (h) => (h === 'content-type' ? 'image/png' : null) },
+    arrayBuffer: async () => PNG.buffer.slice(PNG.byteOffset, PNG.byteOffset + PNG.byteLength),
+  };
+};
+// No reader tab in this harness, so the in-page fallback is unavailable.
+ctx.chrome = { scripting: { executeScript: async () => [] } };
+
+// assembleEpub closes over the VM's globals, so it can be called directly.
+const asm = await ctx.self.YuzuAssemble.assembleEpub(
+  {
+    meta: {
+      title: 'Pipeline Fixture', authors: ['A. Author'], language: 'en',
+      isbn: '9780000000001',
+      coverUrl: 'https://covers.vitalsource.com/vbid/9780000000001/width/1400',
+    },
+    sections,
+  },
+  null,        // no reader tab in this harness
+  () => {},    // progress sink
+);
+
+const blob = asm.blob;
 const out = path.resolve(import.meta.dirname, 'pipeline.epub');
 fs.writeFileSync(out, Buffer.from(await blob.arrayBuffer()));
 
@@ -116,7 +126,10 @@ const check = (n, c, d) => { console.log(`  ${c ? 'ok   ' : 'FAIL '} ${n}${c ? '
 console.log('=== pipeline ===');
 const totalPages = sections.reduce((a, s) => a + s.pages.length, 0);
 check('page markers survived cleaning', totalPages === 6, `got ${totalPages}`);
-check('shared image deduped across sections', images.length === 4, `got ${images.length}`);
+check('shared image fetched once across sections', fetchCalls === 5, `fetches: ${fetchCalls}`);
+check('assembler reported the failed image', asm.failedImages === 1, `got ${asm.failedImages}`);
+check('failed image degraded to a marker',
+  sections.some((s) => s.body.includes('image unavailable')), 'no fallback marker');
 for (const s of sections) {
   check(`${s.id}: no unrewritten tokens`, !/__Y2E_IMG_/.test(s.body));
   for (const p of s.pages) {

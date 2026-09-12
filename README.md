@@ -53,22 +53,44 @@ what comes out of it.
 ```
 popup.js            thin view; the job survives the popup being closed
   │
-background.js       driver: reads the TOC, navigates section by section,
-  │                 holds extracted XHTML (text only)
-  ├── injected/toc.js       runs in the top reader frame
-  │                         reads the TOC tree, drives navigation
-  ├── injected/extract.js   runs in every frame, best-scoring result wins
-  │                         autoscrolls to force lazy render, cleans,
-  │                         serialises to XHTML
+background.js       service worker. Drives the reader, then assembles.
+  │                 Has fetch, CompressionStream and all chrome.* APIs.
+  ├── injected/toc.js          runs in the top reader frame
+  │                            reads the TOC tree, drives navigation
+  ├── injected/extract.js      runs in every frame, best-scoring result wins
+  │                            autoscrolls to force lazy render, cleans,
+  │                            serialises to XHTML
+  ├── injected/fetch-image.js  same-origin image fetch, used as a fallback
   │
-offscreen.js        fetches image bytes, assembles the zip, starts the
-                    download. Exists because MV3 service workers have no
-                    URL.createObjectURL and cannot hand a Blob to
-                    chrome.downloads.
-  └── lib/zip.js      minimal ZIP writer (CompressionStream + CRC32)
-      lib/epub.js     EPUB 3 package: OPF, nested nav.xhtml, NCX, page-list
-      lib/stylesheet.js  the reading stylesheet baked into every book
+  ├── lib/assemble.js   fetches images, rewrites tokens, builds the EPUB
+  ├── lib/zip.js        minimal ZIP writer (CompressionStream + CRC32)
+  ├── lib/epub.js       EPUB 3 package: OPF, nested nav.xhtml, NCX, page-list
+  └── lib/stylesheet.js the reading stylesheet baked into every book
+
+offscreen.js        mints a blob: URL. That is the whole job.
 ```
+
+### Which APIs each context actually has
+
+This tripped the project up once and is worth stating plainly.
+
+| Context | Has | Does not have |
+| --- | --- | --- |
+| Service worker | `fetch`, `CompressionStream`, `caches`, all declared `chrome.*` | any DOM: no `URL.createObjectURL`, `FileReader`, `DOMParser`, `XMLSerializer` |
+| Offscreen document | full DOM, `caches`, **`chrome.runtime` only** | `chrome.storage`, `chrome.downloads`, every other `chrome.*` |
+| Injected scripts | the page's DOM | `chrome.*` entirely |
+
+So the finished EPUB is built in the service worker, handed to the offscreen
+document **through the Cache API** (extension messaging is JSON-only and cannot
+carry binary), turned into a blob URL there, and downloaded by the service
+worker. `test/context-apis.test.mjs` enforces all of this statically.
+
+### Resilience
+
+Extraction is the expensive half, roughly 20 minutes. The extracted sections
+are checkpointed to `chrome.storage.local` before assembly begins, so a failure
+during assembly does not cost the run. The popup then offers **Finish EPUB**,
+which picks up at the assembly step, alongside **Discard and re-extract**.
 
 ### Selector policy
 
@@ -113,13 +135,15 @@ the assistive MathML is used instead.
 - **Not run through epubcheck.** `test/validate_epub.py` checks OCF layout, XML
   well-formedness, manifest/spine/nav agreement and dangling references, which
   covers the realistic failure modes, but it is not a substitute.
+- **Images that cannot be fetched degrade to a visible marker** rather than
+  breaking the build. The popup lists each one.
 
 ## Development
 
 ```bash
-node --check extension/background.js     # no build step; plain JS throughout
-node test/build-fixture.mjs              # synthetic EPUB from the real lib code
-python3 test/validate_epub.py test/fixture.epub
+npm install        # jsdom, for the tests only. The extension has no dependencies.
+npm run check      # syntax check every source file
+npm test           # extractor, pipeline, context-API guard, EPUB validation
 ```
 
 `test/validate_epub.py` works on any EPUB, including real output:
