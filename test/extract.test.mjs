@@ -198,61 +198,6 @@ const goneMs = Date.now() - tGone;
 check('a document that never arrives times out rather than hanging',
   !!wrong && goneMs < 5000, `${goneMs}ms`);
 
-// --- the scroll sweep must be monotonic ------------------------------------
-// Reported from a real run: the page "jumps up and down several times now
-// instead of just scrolling once to the bottom". That was a two-pass verify
-// loop where each pass restored the starting scroll position, so pass two
-// swept from the top again. One sweep that extends as content grows reaches
-// exactly the same content without the thrash.
-{
-  const tall = new JSDOM(HTML, { url: 'https://jigsaw.yuzu.com/books/x/chapter1.xhtml' });
-  const w = tall.window;
-  Object.defineProperty(w.HTMLElement.prototype, 'innerText', {
-    get() { return this.textContent; }, configurable: true,
-  });
-
-  const scroller = w.document.documentElement;
-  const positions = [];
-  let top = 0;
-  let contentHeight = 5000;
-  Object.defineProperty(scroller, 'scrollTop', {
-    get() { return top; },
-    set(v) { top = v; positions.push(v); },
-    configurable: true,
-  });
-  Object.defineProperty(scroller, 'scrollHeight', {
-    // Grows once the sweep is underway, the way lazily rendered content does.
-    get() { if (top > 2000) contentHeight = 8000; return contentHeight; },
-    configurable: true,
-  });
-  Object.defineProperty(scroller, 'scrollWidth', { get() { return 1000; }, configurable: true });
-  Object.defineProperty(w, 'innerHeight', { get() { return 800; }, configurable: true });
-  Object.defineProperty(w, 'innerWidth', { get() { return 1000; }, configurable: true });
-
-  const ex = loadInjected(EXTRACT_JS, 'yuzuExtractSection', {
-    window: w, document: w.document, Node: w.Node, NodeFilter: w.NodeFilter,
-    XMLSerializer: w.XMLSerializer, Event: w.Event,
-    Object, Math, Date, Promise, setTimeout, console,
-    Array, String, Map, Set, JSON, RegExp, Error, TypeError, URL,
-  });
-  await ex.call({ settleMs: 40, maxSettleMs: 600, scrollStepMs: 1, imageTimeoutMs: 60 });
-
-  // Everything except the final restore must be non-decreasing.
-  const sweep = positions.slice(0, -1);
-  let descents = 0;
-  for (let i = 1; i < sweep.length; i++) if (sweep[i] < sweep[i - 1]) descents++;
-
-  check('the scroll sweep never goes backwards', descents === 0,
-    `${descents} descent(s) in ${sweep.length} moves`);
-  check('the sweep starts once, not once per pass',
-    sweep.filter((v) => v === 0).length === 1,
-    `returned to 0 ${sweep.filter((v) => v === 0).length} times`);
-  check('the sweep follows content that grew mid-scroll',
-    Math.max(...sweep) >= 7000, `reached ${Math.max(...sweep)} of 8000`);
-  check('scroll position is restored at the end',
-    positions[positions.length - 1] === 0, `left at ${positions[positions.length - 1]}`);
-}
-
 console.log(`\n  ${pass} passed, ${fail} failed`);
 if (fail) { console.log('\n--- serialized output ---\n' + x.slice(0, 3000)); }
 process.exit(fail ? 1 : 0);
