@@ -24,9 +24,9 @@
     </g>
   </defs>
   <rect width="1280" height="640" fill="#0d0f16"/>
-  <circle cx="1100" cy="322" r="255" fill="url(#glow)"/>
+  <circle cx="1069.24" cy="320.0" r="270" fill="url(#glow)"/>
 
-  <g transform="translate(738,168) scale(1.0)">
+  <g transform="translate(733,137.0) scale(1.0)">
     <use href="#frag" transform="translate(0,0) rotate(-10,43,57)"/>
     <use href="#frag" transform="translate(62,58) rotate(5,43,57)"/>
     <use href="#frag" transform="translate(4,124) rotate(-3,43,57)"/>
@@ -57,21 +57,12 @@
     <text x="294" y="309" font-family="DejaVu Sans Mono, monospace" font-size="15"
           letter-spacing="3" fill="#9a9384">EPUB</text>
   </g>
-  <text x="72" y="142" font-family="DejaVu Sans Mono, monospace" font-size="17" letter-spacing="4.5"
+  <text x="80" y="170" font-family="DejaVu Sans Mono, monospace" font-size="18" letter-spacing="5"
         fill="#6e7689">CHROME EXTENSION · MANIFEST V3</text>
-  <text x="72" y="240" font-family="DejaVu Sans Mono, monospace" font-size="88" font-weight="bold"
+  <text x="80" y="280" font-family="DejaVu Sans Mono, monospace" font-size="96" font-weight="bold"
         fill="#f6f2e9">yuzu2epub</text>
-  <rect x="72" y="268" width="96" height="5" rx="2.5" fill="#f2c14e"/>
-  <text x="72" y="330" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="25" fill="#b9bfcd">One button. A textbook you own becomes a single,</text>
-  <text x="72" y="364" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="25" fill="#b9bfcd">Kindle-ready EPUB with a table of contents that works.</text>
-    <rect x="72" y="412" width="126" height="36" rx="18.0" fill="#171b26" stroke="#2b3243"/>
-    <text x="135.0" y="430.0" text-anchor="middle" dominant-baseline="central" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#cbd1dd">nested TOC</text>
-    <rect x="210" y="412" width="157" height="36" rx="18.0" fill="#171b26" stroke="#2b3243"/>
-    <text x="288.5" y="430.0" text-anchor="middle" dominant-baseline="central" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#cbd1dd">images + cover</text>
-    <rect x="379" y="412" width="165" height="36" rx="18.0" fill="#171b26" stroke="#2b3243"/>
-    <text x="461.5" y="430.0" text-anchor="middle" dominant-baseline="central" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#cbd1dd">print page-list</text>
-    <rect x="556" y="412" width="149" height="36" rx="18.0" fill="#171b26" stroke="#2b3243"/>
-    <text x="630.5" y="430.0" text-anchor="middle" dominant-baseline="central" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#cbd1dd">no build step</text>
-  <text x="72" y="524" font-family="DejaVu Sans Mono, monospace" font-size="18" fill="#98a1b4">github.com/mjshiggins/yuzu2epub</text>
-  <text x="72" y="552" font-family="DejaVu Sans Mono, monospace" font-size="15" fill="#5c6474">MIT · load unpacked · for books you have paid for</text>
+  <rect x="80" y="312" width="110" height="6" rx="3" fill="#f2c14e"/>
+  <text x="80" y="374" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="28" fill="#b9bfcd">A textbook you own, as one</text>
+  <text x="80" y="414" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="28" fill="#b9bfcd">Kindle-ready EPUB.</text>
+  <text x="80" y="492" font-family="DejaVu Sans Mono, monospace" font-size="19" fill="#98a1b4">github.com/mjshiggins/yuzu2epub</text>
 </svg>
