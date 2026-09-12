@@ -153,6 +153,51 @@ const parsed = new window.DOMParser().parseFromString(
 const perr = parsed.querySelector('parsererror');
 check('output is well-formed XML', !perr, perr && perr.textContent.slice(0, 200));
 
+
+// --- document-swap wait ----------------------------------------------------
+// The driver used to sleep a fixed interval after navigating and hope the
+// frame had swapped. If it ran short, the section extracted the PREVIOUS
+// document's content. The extractor now waits for the document it was told
+// to expect.
+function freshExtractor() {
+  const d = new JSDOM(HTML, { url: 'https://jigsaw.yuzu.com/books/x/chapter1.xhtml' });
+  Object.defineProperty(d.window.HTMLElement.prototype, 'innerText', {
+    get() { return this.textContent; }, configurable: true,
+  });
+  return loadInjected(EXTRACT_JS, 'yuzuExtractSection', {
+    window: d.window, document: d.window.document, Node: d.window.Node,
+    NodeFilter: d.window.NodeFilter, XMLSerializer: d.window.XMLSerializer,
+    Event: d.window.Event, Object, Math, Date, Promise, setTimeout, console,
+    Array, String, Map, Set, JSON, RegExp, Error, TypeError, URL,
+  });
+}
+const BASE_OPTS = { settleMs: 40, maxSettleMs: 600, scrollStepMs: 1, imageTimeoutMs: 60 };
+
+// Compare against a run with no expectPath, so scroll and settle costs cancel
+// out and only the swap wait is measured.
+const tNone = Date.now();
+await freshExtractor().call({ ...BASE_OPTS });
+const noExpect = Date.now() - tNone;
+
+const tMatch = Date.now();
+const matched = await freshExtractor().call({
+  ...BASE_OPTS, expectPath: '/EPUB/content/chapter1.xhtml', swapTimeoutMs: 5000,
+});
+const withExpect = Date.now() - tMatch;
+
+check('a matching document does not burn the swap timeout',
+  !matched.skip && (withExpect - noExpect) < 500,
+  `no-expect ${noExpect}ms vs expect ${withExpect}ms (swap budget was 5000ms)`);
+
+// A document that never arrives must give up, not hang forever.
+const tGone = Date.now();
+const wrong = await freshExtractor().call({
+  ...BASE_OPTS, expectPath: '/EPUB/content/never-loads.xhtml', swapTimeoutMs: 700,
+});
+const goneMs = Date.now() - tGone;
+check('a document that never arrives times out rather than hanging',
+  !!wrong && goneMs < 5000, `${goneMs}ms`);
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 if (fail) { console.log('\n--- serialized output ---\n' + x.slice(0, 3000)); }
 process.exit(fail ? 1 : 0);

@@ -13,7 +13,8 @@
 async function yuzuExtractSection(opts) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const O = Object.assign(
-    { settleMs: 900, maxSettleMs: 25000, scrollStepMs: 90, imageTimeoutMs: 12000 },
+    { settleMs: 400, maxSettleMs: 25000, scrollStepMs: 90, imageTimeoutMs: 12000,
+      expectPath: '', swapTimeoutMs: 15000 },
     opts || {},
   );
 
@@ -54,13 +55,40 @@ async function yuzuExtractSection(opts) {
     return isReaderShell ? 0 : txt + structural * 40 + imgs * 80;
   }
 
-  let doc = null;
-  let best = 0;
-  for (const d of candidateDocs()) {
-    const s = scoreDoc(d);
-    if (s > best) {
-      best = s;
-      doc = d;
+  const baseName = (u) => {
+    try {
+      return String(u).split('?')[0].split('#')[0].split('/').pop();
+    } catch (_) {
+      return '';
+    }
+  };
+
+  function pickDoc() {
+    let picked = null;
+    let top = 0;
+    for (const d of candidateDocs()) {
+      const sc = scoreDoc(d);
+      if (sc > top) {
+        top = sc;
+        picked = d;
+      }
+    }
+    return { doc: picked, score: top };
+  }
+
+  let { doc, score: best } = pickDoc();
+
+  // The driver tells us which document this section should be. Poll until the
+  // frame actually shows it rather than waiting a fixed interval and hoping.
+  if (O.expectPath) {
+    const want = baseName(O.expectPath);
+    const deadline = Date.now() + O.swapTimeoutMs;
+    while (Date.now() < deadline) {
+      if (doc && baseName(doc.baseURI) === want) break;
+      await sleep(150);
+      const next = pickDoc();
+      doc = next.doc;
+      best = next.score;
     }
   }
   // Deliberately low. The reader shell already scores zero, so the only thing
@@ -73,6 +101,43 @@ async function yuzuExtractSection(opts) {
   // ── force lazily rendered content to materialise ──────────────────────
   // MathJax and the image loader both hang off IntersectionObserver, so
   // nothing below the fold exists until it has been scrolled past.
+  /**
+   * Is there anything that only materialises once scrolled into view?
+   *
+   * Skipping the scroll is a large speed win on a book split into hundreds of
+   * small files, but guessing wrong drops content silently, which is worse
+   * than being slow. So this errs heavily toward scrolling: it scrolls unless
+   * it can see positive evidence that the whole document is already present
+   * and fully loaded.
+   */
+  function needsScroll(d) {
+    const win = d.defaultView || window;
+    const probe = d.scrollingElement || d.documentElement || d.body;
+    if (!probe) return true;
+
+    const viewportH = win.innerHeight || 800;
+    const viewportW = win.innerWidth || 1000;
+
+    // Content below the fold.
+    if (probe.scrollHeight > viewportH * 1.15) return true;
+    // Content beside the fold. A paginated or column layout keeps scrollHeight
+    // at viewport size while the content extends horizontally, which is
+    // exactly the case a height-only check would miss.
+    if (probe.scrollWidth > viewportW * 1.15) return true;
+
+    // Anything that lazily renders on intersection.
+    if (d.querySelector('mjx-container, math')) return true;
+    if (d.querySelector('img[data-src], img[data-lazy], img[loading="lazy"], [data-lazy-src]')) return true;
+
+    // An image that has not finished loading yet may be waiting on intersection.
+    for (const img of d.querySelectorAll('img')) {
+      if (!img.getAttribute('src')) return true;
+      if (!img.complete) return true;
+      if (img.naturalWidth === 0) return true;
+    }
+    return false;
+  }
+
   async function autoScroll(d) {
     const win = d.defaultView || window;
     const scroller =
@@ -129,8 +194,20 @@ async function yuzuExtractSection(opts) {
   }
 
   await waitUntilStable(doc);
-  await autoScroll(doc);
-  await waitUntilStable(doc);
+
+  // Two passes at most. The second only runs if the first left evidence that
+  // something had not rendered, so the fast path stays fast and the slow path
+  // stays correct.
+  for (let pass = 0; pass < 2; pass++) {
+    if (!needsScroll(doc)) break;
+    const before = doc.body.innerHTML.length;
+    await autoScroll(doc);
+    await waitUntilStable(doc);
+    await waitForImages(doc);
+    // Nothing new appeared and nothing is still pending, so another pass
+    // cannot help.
+    if (doc.body.innerHTML.length === before && !needsScroll(doc)) break;
+  }
   await waitForImages(doc);
 
   // ── MathJax SVG glyph resolution ──────────────────────────────────────
