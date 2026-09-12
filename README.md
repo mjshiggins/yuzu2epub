@@ -45,11 +45,8 @@ each section to paint, and reads the resulting DOM. That is the same access path
 as reading the book by hand, just automated.
 
 It does **not** call Yuzu's backend content API to pull raw book assets. That
-would be far faster and it is where most tools of this kind go. It is also the
-point where a personal format-shifting tool turns into a general-purpose
-downloader that works just as well against an account that never bought
-anything. The slower path is the one that stays honestly scoped to a book you
-own, so that is the path this takes.
+would be far faster and it is where most tools of this kind go. Enterprising individuals
+may modify the tool to their liking, but I'm not doing that here.
 
 Use this on books you have paid for, for your own reading. Do not redistribute
 what comes out of it.
