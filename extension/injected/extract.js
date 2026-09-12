@@ -121,47 +121,64 @@ async function yuzuExtractSection(opts) {
     // Content below the fold.
     if (probe.scrollHeight > viewportH * 1.15) return true;
     // Content beside the fold. A paginated or column layout keeps scrollHeight
-    // at viewport size while the content extends horizontally, which is
-    // exactly the case a height-only check would miss.
+    // at viewport size while content extends sideways, which a height-only
+    // check would miss.
     if (probe.scrollWidth > viewportW * 1.15) return true;
 
-    // Anything that lazily renders on intersection.
+    // Anything that materialises on intersection.
     if (d.querySelector('mjx-container, math')) return true;
     if (d.querySelector('img[data-src], img[data-lazy], img[loading="lazy"], [data-lazy-src]')) return true;
-
-    // An image that has not finished loading yet may be waiting on intersection.
+    // An image with no src at all is waiting for something to set one.
     for (const img of d.querySelectorAll('img')) {
       if (!img.getAttribute('src')) return true;
-      if (!img.complete) return true;
-      if (img.naturalWidth === 0) return true;
     }
+    // Deliberately NOT checking img.complete or naturalWidth here. A broken or
+    // still-loading image is not evidence that scrolling would help, and
+    // treating it as such made the scroll run on essentially every section.
+    // waitForImages already handles waiting for loads.
     return false;
   }
 
+  /**
+   * One downward sweep, never a restart.
+   *
+   * Lazily rendered content appears as it intersects the viewport, and it can
+   * make the document taller while the sweep is running. The loop re-reads the
+   * height every step, so growth simply extends the same sweep. An earlier
+   * version ran the whole thing twice and restored the scroll position between
+   * passes, which visibly bounced the page up and down and doubled the cost
+   * for no extra coverage.
+   */
   async function autoScroll(d) {
     const win = d.defaultView || window;
-    const scroller =
-      d.scrollingElement ||
-      d.documentElement ||
-      d.body;
-    const height = () => Math.max(scroller.scrollHeight, d.body.scrollHeight || 0);
+    const scroller = d.scrollingElement || d.documentElement || d.body;
+    if (!scroller) return;
+
+    const startedAt = scroller.scrollTop;
     const viewport = win.innerHeight || 800;
-    const originally = scroller.scrollTop;
+    const step = Math.max(200, Math.floor(viewport * 0.9));
+    const height = () => Math.max(scroller.scrollHeight, d.body ? d.body.scrollHeight : 0);
 
     let pos = 0;
     let guard = 0;
-    while (pos < height() && guard++ < 400) {
+    while (guard++ < 600) {
       scroller.scrollTop = pos;
       try {
         win.dispatchEvent(new Event('scroll'));
       } catch (_) {}
       await sleep(O.scrollStepMs);
-      pos += Math.max(200, Math.floor(viewport * 0.85));
+      // Re-read each step: if lazy content extended the document, keep going
+      // rather than starting over.
+      if (pos >= height() - viewport) break;
+      pos += step;
     }
+
+    // Settle at the bottom so anything triggered near the end can finish.
     scroller.scrollTop = height();
-    await sleep(250);
-    scroller.scrollTop = originally;
-    await sleep(150);
+    await sleep(200);
+    // Restore once, at the very end, so the reader's own position is not left
+    // somewhere unexpected.
+    scroller.scrollTop = startedAt;
   }
 
   async function waitUntilStable(d) {
@@ -195,18 +212,11 @@ async function yuzuExtractSection(opts) {
 
   await waitUntilStable(doc);
 
-  // Two passes at most. The second only runs if the first left evidence that
-  // something had not rendered, so the fast path stays fast and the slow path
-  // stays correct.
-  for (let pass = 0; pass < 2; pass++) {
-    if (!needsScroll(doc)) break;
-    const before = doc.body.innerHTML.length;
+  // A single sweep. It extends itself as lazy content appears, so there is
+  // nothing a second pass would reach that the first did not.
+  if (needsScroll(doc)) {
     await autoScroll(doc);
     await waitUntilStable(doc);
-    await waitForImages(doc);
-    // Nothing new appeared and nothing is still pending, so another pass
-    // cannot help.
-    if (doc.body.innerHTML.length === before && !needsScroll(doc)) break;
   }
   await waitForImages(doc);
 
