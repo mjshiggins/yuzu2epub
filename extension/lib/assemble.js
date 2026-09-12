@@ -266,6 +266,7 @@ async function assembleEpub(job, tabId, onProgress) {
   report('Compressing EPUB');
   const images = Array.from(byUrl.values());
   const blob = await self.YuzuEpub.buildEpub({
+    nav: job.navEntries || null,
     title: meta.title || 'Untitled',
     authors: meta.authors || [],
     language: meta.language || 'en',

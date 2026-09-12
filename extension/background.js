@@ -268,10 +268,12 @@ async function extractBook(tabId, prior, isbn) {
   // Resume only when the book still has the same shape. A different TOC length
   // means a different book or a changed edition, so start clean.
   let sections = [];
+  let navEntries = [];
   let start = 0;
   if (prior && prior.entries && prior.entries.length === toc.entries.length
       && prior.meta && prior.meta.isbn === meta.isbn) {
     sections = prior.sections || [];
+    navEntries = prior.navEntries || [];
     start = prior.nextIndex || 0;
   }
 
@@ -292,6 +294,7 @@ async function extractBook(tabId, prior, isbn) {
       await saveHeader(isbn, {
         meta,
         entries: toc.entries,
+        navEntries,
         nextIndex,
         complete: !!complete,
         count: sections.length,
@@ -303,6 +306,28 @@ async function extractBook(tabId, prior, isbn) {
   };
 
   let consecutiveNavFailures = 0;
+
+  // A TOC entry is not the same thing as a document. Some books give every
+  // entry its own file; others point hundreds of entries at anchors inside a
+  // handful of chapter files (one tested book: 658 entries, 31 documents).
+  // Extract each document once and let the navigation tree carry the rest,
+  // otherwise the same chapter is captured once per anchor.
+  const docOf = (e) => (e.path ? e.path.split('#')[0] : '');
+  const fragOf = (e) => {
+    if (!e.path) return '';
+    const i = e.path.indexOf('#');
+    return i === -1 ? '' : e.path.slice(i + 1);
+  };
+
+  const byDoc = new Map();
+  for (const sec of sections) if (sec.docKey) byDoc.set(sec.docKey, sec);
+
+  const distinctDocs = new Set(toc.entries.map(docOf).filter(Boolean)).size;
+  if (distinctDocs && distinctDocs < toc.entries.length) {
+    setState({
+      phase: `${toc.entries.length} entries across ${distinctDocs} documents`,
+    });
+  }
 
   for (let i = start; i < toc.entries.length; i++) {
     if (state.cancelled) {
@@ -324,6 +349,20 @@ async function extractBook(tabId, prior, isbn) {
       phase: `Section ${i + 1} of ${toc.entries.length}: ${entry.title}`,
       etaMinutes: estimateRemaining(i, toc.entries.length),
     });
+
+    // Already have this document? Record the navigation target and move on
+    // without touching the reader at all.
+    const docKey = docOf(entry);
+    if (docKey && byDoc.has(docKey)) {
+      const existing = byDoc.get(docKey);
+      navEntries.push({
+        title: entry.title,
+        depth: entry.depth,
+        href: existing.filename + (fragOf(entry) ? `#${fragOf(entry)}` : ''),
+      });
+      if ((i + 1) % CHECKPOINT_EVERY === 0) await save(i + 1, false);
+      continue;
+    }
 
     const nav = await runInTop(tabId, yuzuGotoSection, [entry, toc.entries.length]);
     if (!nav || nav.error) {
@@ -370,17 +409,29 @@ async function extractBook(tabId, prior, isbn) {
     if (entry.path && payload.baseURI) {
       // The TOC told us which document this entry lives in. If the reader gave
       // us a different one, navigation raced and the content is wrong.
-      const want = entry.path.split('/').pop();
+      const want = entry.path.split('#')[0].split('/').pop();
       const got = payload.baseURI.split('?')[0].split('#')[0].split('/').pop();
       if (want && got && want !== got) {
         warn(`"${entry.title}" expected ${want} but extracted ${got}.`);
       }
     }
 
+    // A book with no usable paths cannot be deduplicated, so catch the same
+    // failure by content instead: an identical body means navigation did not
+    // move and we are about to store the same chapter twice.
+    if (!docKey && sections.length) {
+      const prev = sections[sections.length - 1];
+      if (prev.body === payload.xhtml) {
+        warn(`"${entry.title}" extracted content identical to "${prev.title}". `
+          + `The reader may not have navigated.`);
+      }
+    }
+
     const n = String(sections.length + 1).padStart(4, '0');
-    sections.push({
+    const section = {
       id: `sec-${n}`,
       filename: `text/section-${n}.xhtml`,
+      docKey,
       title: entry.title,
       depth: entry.depth,
       page: entry.page,
@@ -393,6 +444,14 @@ async function extractBook(tabId, prior, isbn) {
       sourceUrl: payload.baseURI || '',
       hasMathML: !!payload.hasMathML,
       hasSvg: !!payload.hasSvg,
+    };
+    sections.push(section);
+    if (docKey) byDoc.set(docKey, section);
+
+    navEntries.push({
+      title: entry.title,
+      depth: entry.depth,
+      href: section.filename + (fragOf(entry) ? `#${fragOf(entry)}` : ''),
     });
 
     sectionsThisRun++;
@@ -416,7 +475,10 @@ async function extractBook(tabId, prior, isbn) {
   // Flush every batch, not just the last, so a resume can read them all back.
   for (let b = 0; b * BATCH_SIZE < sections.length; b++) await saveBatch(isbn, b, sections);
   await save(toc.entries.length, true);
-  return { meta, entries: toc.entries, sections, nextIndex: toc.entries.length, complete: true };
+  return {
+    meta, entries: toc.entries, sections, navEntries,
+    nextIndex: toc.entries.length, complete: true,
+  };
 }
 
 // ---------------------------------------------------------------------------

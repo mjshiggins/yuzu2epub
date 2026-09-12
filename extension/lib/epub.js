@@ -31,14 +31,19 @@ function extForMedia(mediaType) {
 }
 
 /**
- * Turn the flat, depth-annotated section list into a tree.
+ * Turn a flat, depth-annotated list of navigation entries into a tree.
+ *
+ * Navigation entries are not the same thing as spine documents. A book may
+ * point many TOC entries at anchors inside one chapter file, so each entry
+ * carries its own href (filename plus optional fragment) rather than being
+ * assumed to own a document.
  * A section with depth N becomes a child of the most recent section of
  * depth N-1. Anything orphaned stays at the top level.
  */
-function buildTree(sections) {
+function buildTree(items) {
   const roots = [];
   const lastAtDepth = [];
-  for (const s of sections) {
+  for (const s of items) {
     const node = { section: s, children: [] };
     const d = Math.max(0, s.depth | 0);
     if (d === 0 || !lastAtDepth[d - 1]) {
@@ -59,7 +64,7 @@ function navList(nodes, indent, esc) {
   let out = `${pad}<ol>\n`;
   for (const n of nodes) {
     const s = n.section;
-    out += `${pad}  <li><a href="${s.filename}">${esc(s.title)}</a>`;
+    out += `${pad}  <li><a href="${s.href || s.filename}">${esc(s.title)}</a>`;
     if (n.children.length) {
       out += '\n' + navList(n.children, indent + 2, esc) + `${pad}  `;
     }
@@ -70,7 +75,7 @@ function navList(nodes, indent, esc) {
 }
 
 function navDoc(lang, tree, pageList, esc, hasCover) {
-  const first = tree[0] ? tree[0].section.filename : 'text/section-0001.xhtml';
+  const first = tree[0] ? (tree[0].section.href || tree[0].section.filename) : 'text/section-0001.xhtml';
   let pages = '';
   if (pageList.length) {
     pages =
@@ -109,7 +114,7 @@ function ncxPoints(nodes, counter, esc) {
     const s = n.section;
     out += `    <navPoint id="np-${i}" playOrder="${i}">
       <navLabel><text>${esc(s.title)}</text></navLabel>
-      <content src="${s.filename}"/>
+      <content src="${s.href || s.filename}"/>
 `;
     if (n.children.length) out += ncxPoints(n.children, counter, esc);
     out += '    </navPoint>\n';
@@ -268,7 +273,12 @@ async function buildEpub(p) {
   const coverMediaType = (p.cover && p.cover.mediaType) || 'image/jpeg';
   const coverHref = `cover.${extForMedia(coverMediaType)}`;
 
-  const tree = buildTree(p.sections);
+  // The navigation tree is supplied separately when TOC entries and documents
+  // do not map one to one. Without it, every section is its own entry.
+  const navItems = (p.nav && p.nav.length)
+    ? p.nav
+    : p.sections.map((s) => ({ title: s.title, depth: s.depth, href: s.filename }));
+  const tree = buildTree(navItems);
 
   // Flatten every printed page marker the extractor found, in reading order.
   const pageList = [];
