@@ -145,11 +145,20 @@ chrome.alarms.onAlarm.addListener((a) => {
 // ---------------------------------------------------------------------------
 // Injection
 // ---------------------------------------------------------------------------
-async function runInTop(tabId, func, args = []) {
+/**
+ * @param {string} [world] 'MAIN' to run in the page's own JS world.
+ *
+ * Content scripts run in an isolated world by default. That world shares the
+ * DOM but NOT properties the page's own scripts attached to DOM nodes, so
+ * React's __reactFiber$ expandos are invisible from it. Reading the TOC needs
+ * them, so that one call runs in MAIN. Everything else stays isolated.
+ */
+async function runInTop(tabId, func, args = [], world) {
   const [res] = await chrome.scripting.executeScript({
     target: { tabId, frameIds: [0] },
     func,
     args,
+    ...(world ? { world } : {}),
   });
   return res && res.result;
 }
@@ -251,7 +260,7 @@ async function extractBook(tabId, prior, isbn) {
   setState({ phase: 'Reading table of contents' });
   await assertReaderAlive(tabId);
 
-  const toc = await runInTop(tabId, yuzuReadToc);
+  const toc = await runInTop(tabId, yuzuReadToc, [], 'MAIN');
   if (!toc || toc.error) {
     throw new Error((toc && toc.error) || 'Could not read the table of contents.');
   }
@@ -319,10 +328,36 @@ async function extractBook(tabId, prior, isbn) {
     return i === -1 ? '' : e.path.slice(i + 1);
   };
 
-  const byDoc = new Map();
-  for (const sec of sections) if (sec.docKey) byDoc.set(sec.docKey, sec);
+  const docUrlOf = (u) => String(u || '').split('?')[0].split('#')[0];
 
+  // Two indexes, deliberately.
+  //   byDoc    keyed on the path the TOC declares. Lets us skip navigating
+  //            entirely, but depends on reading the reader's React state.
+  //   byDocUrl keyed on the URL the content frame actually loaded. Always
+  //            available, costs a navigation to learn, and is what keeps the
+  //            book correct when the TOC paths cannot be read.
+  const byDoc = new Map();
+  const byDocUrl = new Map();
+  for (const sec of sections) {
+    if (sec.docKey) byDoc.set(sec.docKey, sec);
+    if (sec.sourceUrl) byDocUrl.set(docUrlOf(sec.sourceUrl), sec);
+  }
+
+  const withPath = toc.entries.filter((e) => e.path).length;
   const distinctDocs = new Set(toc.entries.map(docOf).filter(Boolean)).size;
+
+  if (!withPath) {
+    // Without paths every entry is treated as its own document. On a book
+    // whose TOC points many entries into one chapter file, that means
+    // extracting the same chapter repeatedly. Say so rather than silently
+    // producing a book full of duplicates.
+    warn('Could not read document paths from the reader, so entries that share '
+      + 'a chapter file cannot be grouped. Duplicate sections are likely.');
+  } else if (withPath < toc.entries.length) {
+    warn(`${toc.entries.length - withPath} of ${toc.entries.length} entries have no `
+      + 'document path; those cannot be grouped.');
+  }
+
   if (distinctDocs && distinctDocs < toc.entries.length) {
     setState({
       phase: `${toc.entries.length} entries across ${distinctDocs} documents`,
@@ -416,10 +451,27 @@ async function extractBook(tabId, prior, isbn) {
       }
     }
 
-    // A book with no usable paths cannot be deduplicated, so catch the same
-    // failure by content instead: an identical body means navigation did not
-    // move and we are about to store the same chapter twice.
-    if (!docKey && sections.length) {
+    // The frame tells us which document we actually got. If it is one we have
+    // already stored, this entry is another anchor into it, not a new section.
+    // This is the backstop that works without any reader internals.
+    const loadedUrl = docUrlOf(payload.baseURI);
+    if (loadedUrl && byDocUrl.has(loadedUrl)) {
+      const existing = byDocUrl.get(loadedUrl);
+      navEntries.push({
+        title: entry.title,
+        depth: entry.depth,
+        href: existing.filename + (fragOf(entry) ? `#${fragOf(entry)}` : ''),
+      });
+      // Remember the TOC path too, so later entries can skip navigating.
+      if (docKey && !byDoc.has(docKey)) byDoc.set(docKey, existing);
+      sectionsThisRun++;
+      if ((i + 1) % CHECKPOINT_EVERY === 0) await save(i + 1, false);
+      continue;
+    }
+
+    // Catch the same failure by content as well as by URL. An identical body
+    // means the reader did not move, whatever the TOC claimed.
+    if (sections.length) {
       const prev = sections[sections.length - 1];
       if (prev.body === payload.xhtml) {
         warn(`"${entry.title}" extracted content identical to "${prev.title}". `
@@ -447,6 +499,7 @@ async function extractBook(tabId, prior, isbn) {
     };
     sections.push(section);
     if (docKey) byDoc.set(docKey, section);
+    if (loadedUrl) byDocUrl.set(loadedUrl, section);
 
     navEntries.push({
       title: entry.title,
