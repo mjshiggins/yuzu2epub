@@ -7,8 +7,12 @@ function show(which) {
   for (const k of ['idle', 'running', 'finished', 'failed']) $(k).hidden = k !== which;
 }
 
-function resumeLine(n) {
-  return `${n} sections from an earlier run are cached, so this picks up at the assembly step.`;
+function resumeLine(s) {
+  if (s.resumableComplete) {
+    return `All ${s.resumable} sections are cached, so this picks up at the assembly step.`;
+  }
+  const of = s.resumableTotal ? ` of ${s.resumableTotal}` : '';
+  return `${s.resumable}${of} sections are cached. This carries on from where the last run stopped.`;
 }
 
 function render(s) {
@@ -28,12 +32,17 @@ function render(s) {
   } else if (s.status === 'error') {
     show('failed');
     $('errmsg').textContent = s.message || 'Something went wrong.';
-    $('retryhint').textContent = s.resumable ? resumeLine(s.resumable) : '';
+    $('retry').textContent = s.resumable
+      ? (s.resumableComplete ? 'Finish EPUB' : 'Resume')
+      : 'Try again';
+    $('retryhint').textContent = s.resumable ? resumeLine(s) : '';
   } else {
     show('idle');
-    $('start').textContent = s.resumable ? 'Finish EPUB' : 'Build EPUB';
+    $('start').textContent = s.resumable
+      ? (s.resumableComplete ? 'Finish EPUB' : 'Resume')
+      : 'Build EPUB';
     $('fresh').hidden = !s.resumable;
-    if (s.resumable) $('hint').textContent = resumeLine(s.resumable);
+    if (s.resumable) $('hint').textContent = resumeLine(s);
   }
 
   const w = $('warnings');

@@ -46,6 +46,8 @@ const state = {
   warnings: [],
   filename: '',
   resumable: 0,
+  resumableTotal: 0,
+  resumableComplete: false,
   cancelled: false,
 };
 
@@ -173,8 +175,11 @@ async function downloadBlob(blob, filename) {
 // ---------------------------------------------------------------------------
 // Extraction
 // ---------------------------------------------------------------------------
-async function extractBook(tabId) {
+const CHECKPOINT_EVERY = 3;
+
+async function extractBook(tabId, prior, key) {
   setState({ phase: 'Reading table of contents' });
+  await assertReaderAlive(tabId);
 
   const toc = await runInTop(tabId, yuzuReadToc);
   if (!toc || toc.error) {
@@ -182,16 +187,58 @@ async function extractBook(tabId) {
   }
   if (!toc.entries || !toc.entries.length) throw new Error('The table of contents is empty.');
 
+  const meta = {
+    title: toc.title,
+    authors: toc.authors && toc.authors.length ? toc.authors : [],
+    language: toc.language || 'en',
+    isbn: toc.isbn || '',
+    coverUrl: toc.isbn ? `https://covers.vitalsource.com/vbid/${toc.isbn}/width/1400` : '',
+  };
+
+  // Resume only when the book still has the same shape. A different TOC length
+  // means a different book or a changed edition, so start clean.
+  let sections = [];
+  let start = 0;
+  if (prior && prior.entries && prior.entries.length === toc.entries.length
+      && prior.meta && prior.meta.isbn === meta.isbn) {
+    sections = prior.sections || [];
+    start = prior.nextIndex || 0;
+  }
+
   setState({
     title: toc.title,
     total: toc.entries.length,
-    phase: `Extracting ${toc.entries.length} sections`,
+    current: start,
+    phase: start
+      ? `Resuming at section ${start + 1} of ${toc.entries.length}`
+      : `Extracting ${toc.entries.length} sections`,
   });
 
-  const sections = [];
-  for (let i = 0; i < toc.entries.length; i++) {
-    if (state.cancelled) throw new Error('Cancelled.');
+  const save = async (nextIndex, complete) => {
+    try {
+      await chrome.storage.local.set({
+        [key]: { meta, entries: toc.entries, sections, nextIndex, complete: !!complete },
+      });
+    } catch (err) {
+      warn(`Could not checkpoint progress: ${err.message}`);
+    }
+  };
+
+  for (let i = start; i < toc.entries.length; i++) {
+    if (state.cancelled) {
+      await save(i, false);
+      throw new Error('Cancelled. Press Finish EPUB to carry on from here.');
+    }
     const entry = toc.entries[i];
+
+    // Checkpoint before anything that can fail, so a session loss costs at
+    // most a couple of sections rather than the whole run.
+    try {
+      await assertReaderAlive(tabId);
+    } catch (err) {
+      await save(i, false);
+      throw err;
+    }
     setState({
       current: i + 1,
       phase: `Section ${i + 1} of ${toc.entries.length}: ${entry.title}`,
@@ -234,6 +281,8 @@ async function extractBook(tabId) {
       hasMathML: !!payload.hasMathML,
       hasSvg: !!payload.hasSvg,
     });
+
+    if ((i + 1) % CHECKPOINT_EVERY === 0) await save(i + 1, false);
   }
 
   if (!sections.length) throw new Error('Nothing could be extracted from this book.');
@@ -250,21 +299,39 @@ async function extractBook(tabId) {
     }
   }
 
-  return {
-    meta: {
-      title: toc.title,
-      authors: toc.authors && toc.authors.length ? toc.authors : [],
-      language: toc.language || 'en',
-      isbn: toc.isbn || '',
-      coverUrl: toc.isbn ? `https://covers.vitalsource.com/vbid/${toc.isbn}/width/1400` : '',
-    },
-    sections,
-  };
+  await save(toc.entries.length, true);
+  return { meta, entries: toc.entries, sections, nextIndex: toc.entries.length, complete: true };
 }
 
 // ---------------------------------------------------------------------------
 // Job
 // ---------------------------------------------------------------------------
+/**
+ * Yuzu sessions can end mid-run: an SSO timeout bounces the tab to a logout or
+ * error page. Without this check the driver would keep clicking blind through
+ * whatever replaced the reader for every remaining section.
+ */
+async function assertReaderAlive(tabId) {
+  let url = '';
+  try {
+    url = (await chrome.tabs.get(tabId)).url || '';
+  } catch (_) {
+    throw new Error('The reader tab was closed. Reopen the book and press Finish EPUB to carry on.');
+  }
+  if (/^https?:\/\/reader\.yuzu\.com\/reader\/books\//.test(url)) return;
+
+  if (/logout|signout|sso\.|\/login|signin|idp/i.test(url)) {
+    throw new Error(
+      'Your Yuzu session ended, so the reader signed out. Sign back in, reopen ' +
+      'the book, then press Finish EPUB to carry on from where this stopped.',
+    );
+  }
+  throw new Error(
+    'The reader tab navigated away from the book. Reopen it and press Finish ' +
+    'EPUB to carry on from where this stopped.',
+  );
+}
+
 async function currentIsbn(tabId) {
   try {
     const tab = await chrome.tabs.get(tabId);
@@ -292,31 +359,28 @@ async function runJob(tabId, { fresh = false } = {}) {
 
   if (fresh) await chrome.storage.local.remove(key);
 
-  // Extraction is the expensive half. If a previous run got through it and
-  // only assembly failed, reuse the result rather than spending another
-  // twenty minutes on it.
-  let job = null;
+  // Extraction is the expensive half. Reuse whatever a previous run banked:
+  // a finished extraction skips straight to assembly, a partial one carries on
+  // from the section it stopped at.
+  let prior = null;
   if (!fresh) {
     const stored = await chrome.storage.local.get(key);
     if (stored[key] && stored[key].sections && stored[key].sections.length) {
-      job = stored[key];
-      setState({
-        title: job.meta.title,
-        total: job.sections.length,
-        current: job.sections.length,
-        phase: `Reusing ${job.sections.length} sections extracted earlier`,
-      });
+      prior = stored[key];
     }
   }
 
-  if (!job) {
-    job = await extractBook(tabId);
-    // Checkpoint before assembly, which is where the previous version died.
-    try {
-      await chrome.storage.local.set({ [key]: job });
-    } catch (err) {
-      warn(`Could not checkpoint extracted sections: ${err.message}`);
-    }
+  let job;
+  if (prior && prior.complete) {
+    job = prior;
+    setState({
+      title: job.meta.title,
+      total: job.sections.length,
+      current: job.sections.length,
+      phase: `Reusing ${job.sections.length} sections extracted earlier`,
+    });
+  } else {
+    job = await extractBook(tabId, prior, key);
   }
 
   setState({ status: 'assembling', phase: 'Fetching images' });
@@ -335,6 +399,8 @@ async function runJob(tabId, { fresh = false } = {}) {
     phase: 'Done',
     filename: result.filename,
     resumable: 0,
+    resumableTotal: 0,
+    resumableComplete: false,
     message:
       `${job.sections.length} sections, ${result.imageCount} images, ` +
       `${(result.blob.size / 1048576).toFixed(1)} MB` +
@@ -346,8 +412,13 @@ async function refreshResumable(tabId) {
   const isbn = await currentIsbn(tabId);
   const key = cacheKeyFor(isbn);
   const stored = await chrome.storage.local.get(key);
-  const n = stored[key] && stored[key].sections ? stored[key].sections.length : 0;
-  setState({ resumable: n });
+  const job = stored[key];
+  const n = job && job.sections ? job.sections.length : 0;
+  setState({
+    resumable: n,
+    resumableTotal: job && job.entries ? job.entries.length : 0,
+    resumableComplete: !!(job && job.complete),
+  });
   return n;
 }
 

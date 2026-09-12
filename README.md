@@ -85,12 +85,31 @@ document **through the Cache API** (extension messaging is JSON-only and cannot
 carry binary), turned into a blob URL there, and downloaded by the service
 worker. `test/context-apis.test.mjs` enforces all of this statically.
 
+### Safety rule: never click outside the TOC
+
+Section navigation works by clicking the reader's own controls, so the blast
+radius of a bad selector is whatever else is on the page. An early version
+queried the whole document for collapsed expanders and clicked every one,
+which also hit the account and options menus in the header; a run ended on an
+SSO logout page. Every interactive query is now scoped to the table of
+contents list, and `test/toc.test.mjs` puts an account menu with a sign out
+item beside the TOC and asserts nothing in the header is ever touched.
+
 ### Resilience
 
-Extraction is the expensive half, roughly 20 minutes. The extracted sections
-are checkpointed to `chrome.storage.local` before assembly begins, so a failure
-during assembly does not cost the run. The popup then offers **Finish EPUB**,
-which picks up at the assembly step, alongside **Discard and re-extract**.
+Extraction is the expensive half, roughly 20 minutes, and several things can
+interrupt it: an assembly error, a closed tab, or a Yuzu session timing out and
+bouncing the reader to an SSO logout page.
+
+Sections are therefore checkpointed to `chrome.storage.local` every few
+sections and again before assembly. The driver also checks before each section
+that the tab is still on a book, and stops with a specific message rather than
+clicking blind through an error page for the rest of the run.
+
+Nothing is lost either way. The popup offers **Resume** to carry on from the
+section that failed, or **Finish EPUB** when extraction had completed and only
+assembly failed, alongside **Discard and re-extract**. After a sign-out, log
+back in, reopen the book, and press Resume.
 
 ### Selector policy
 

@@ -16,6 +16,17 @@
  * @returns {Promise<{error?: string, isbn?: string, title?: string,
  *                    authors?: string[], entries?: Array}>}
  */
+function tocPanelContains(control, tocRoot) {
+  // Accept a control only if it and the TOC list share a near ancestor, which
+  // keeps us inside the TOC panel and out of the reader's header menus.
+  let box = tocRoot;
+  for (let i = 0; i < 4 && box; i++) {
+    if (box.contains(control)) return true;
+    box = box.parentElement;
+  }
+  return false;
+}
+
 async function yuzuReadToc() {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -40,25 +51,48 @@ async function yuzuReadToc() {
       return { error: 'Table of contents did not load. Open the book and try again.' };
     }
 
-    // Expand every Part so nested chapters are present in the DOM.
-    // The control flips to toc_collapse_all once expanded, so this is a no-op
-    // on a second run.
+    // Everything below is scoped to the table of contents list. An earlier
+    // version queried the whole document for collapsed expanders and clicked
+    // all of them, which also hits the account and options menus in the
+    // reader's header. Never click anything outside this subtree.
+    const tocRoot = (() => {
+      const entry = document.querySelector('button[data-uuid^="tocIndex"]');
+      let outermost = null;
+      let node = entry;
+      while (node) {
+        if (node.tagName === 'UL') outermost = node;
+        node = node.parentElement;
+      }
+      return outermost;
+    })();
+    if (!tocRoot) {
+      return { error: 'Could not locate the table of contents list.' };
+    }
+
+    // Expand every Part so nested chapters are present in the DOM. The control
+    // flips to toc_collapse_all once expanded, so this is a no-op second time.
     const expandAll = document.querySelector('[data-interaction-id="toc_expand_all"]');
-    if (expandAll) {
+    if (expandAll && tocPanelContains(expandAll, tocRoot)) {
       expandAll.click();
       await sleep(1500);
     }
-    // Belt and braces: expand any individual node still collapsed.
+
+    // Belt and braces: expand any individual node still collapsed. Restricted
+    // to toggles that sit inside the TOC list AND belong to a row that holds a
+    // TOC entry, so no other disclosure widget can be hit by accident.
     for (let pass = 0; pass < 3; pass++) {
       const collapsed = Array.from(
-        document.querySelectorAll('li button[aria-expanded="false"]'),
-      );
+        tocRoot.querySelectorAll('button[aria-expanded="false"]'),
+      ).filter((b) => {
+        const row = b.closest('li');
+        return row && row.querySelector('button[data-uuid^="tocIndex"]');
+      });
       if (!collapsed.length) break;
       collapsed.forEach((b) => b.click());
       await sleep(900);
     }
 
-    const buttons = Array.from(document.querySelectorAll('button[data-uuid^="tocIndex"]'));
+    const buttons = Array.from(tocRoot.querySelectorAll('button[data-uuid^="tocIndex"]'));
 
     // Nesting depth is the count of ancestor <ul> elements. The outermost list
     // is depth 1, so we normalise to a 0-based depth.
@@ -141,6 +175,11 @@ async function yuzuGotoSection(uuid) {
   try {
     const btn = document.querySelector(`button[data-uuid="${uuid}"]`);
     if (!btn) return { error: `TOC entry ${uuid} not found` };
+    // If the reader has navigated away (session loss, error page), the entry
+    // is gone and clicking blind would hit whatever replaced it.
+    if (!/\/reader\/books\//.test(location.pathname)) {
+      return { error: 'The reader is no longer showing a book.' };
+    }
 
     const already = btn.getAttribute('aria-current') === 'true';
     btn.click();
