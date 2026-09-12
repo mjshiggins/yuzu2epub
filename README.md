@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/header.png" alt="yuzu2epub - one button turns a Yuzu textbook you own into a single Kindle-ready EPUB with a nested table of contents" width="100%">
+</p>
+
 # yuzu2epub
 
 A Chrome extension that turns a Yuzu textbook **you have purchased** into a

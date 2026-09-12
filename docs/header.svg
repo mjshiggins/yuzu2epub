@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f2c14e" stop-opacity="0.15"/>
+      <stop offset="55%" stop-color="#f2c14e" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#f2c14e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fcf9f2"/>
+      <stop offset="100%" stop-color="#e9e3d4"/>
+    </linearGradient>
+    <g id="frag">
+      <rect width="86" height="114" rx="5" fill="#171b26" stroke="#2b3243" stroke-width="1.5"/>
+      <rect x="13" y="19" width="56" height="4" rx="2" fill="#39415a"/>
+      <rect x="13" y="33" width="62" height="4" rx="2" fill="#333b52"/>
+      <rect x="13" y="47" width="42" height="4" rx="2" fill="#2e3549"/>
+      <rect x="13" y="68" width="60" height="4" rx="2" fill="#2c3348"/>
+      <rect x="13" y="82" width="36" height="4" rx="2" fill="#262d40"/>
+    </g>
+    <g id="chev">
+      <path d="M0,-11 L11,0 L0,11" fill="none" stroke="#f2c14e" stroke-width="3.5"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </defs>
+
+  <rect width="1280" height="640" fill="#0d0f16"/>
+  <circle cx="1100" cy="322" r="255" fill="url(#glow)"/>
+
+  <!-- many source fragments -->
+  <g>
+    <use href="#frag" transform="translate(738,168) rotate(-10,43,57)"/>
+    <use href="#frag" transform="translate(800,226) rotate(5,43,57)"/>
+    <use href="#frag" transform="translate(742,292) rotate(-3,43,57)"/>
+    <use href="#frag" transform="translate(798,352) rotate(8,43,57)"/>
+    <use href="#frag" transform="translate(744,420) rotate(-6,43,57)"/>
+  </g>
+
+  <!-- becoming one -->
+  <g transform="translate(0,322)">
+    <use href="#chev" transform="translate(918,0)" opacity="0.3"/>
+    <use href="#chev" transform="translate(941,0)" opacity="0.62"/>
+    <use href="#chev" transform="translate(964,0)"/>
+  </g>
+
+  <!-- the assembled book -->
+  <rect x="1000" y="172" width="205" height="300" rx="7" fill="url(#paper)"/>
+  <rect x="1000" y="172" width="14" height="300" rx="7" fill="#f2c14e"/>
+  <rect x="1009" y="172" width="6" height="300" fill="#f2c14e"/>
+
+  <!-- three levels of hierarchy, indented so the nesting reads at a glance -->
+  <g>
+    <rect x="1032" y="212" width="120" height="8" rx="4" fill="#262b38"/>
+    <rect x="1048" y="235" width="88"  height="5" rx="2.5" fill="#6f7486"/>
+    <rect x="1062" y="251" width="68"  height="4" rx="2"   fill="#a3a7b4"/>
+    <rect x="1062" y="265" width="56"  height="4" rx="2"   fill="#a3a7b4"/>
+
+    <rect x="1032" y="292" width="132" height="8" rx="4" fill="#262b38"/>
+    <rect x="1048" y="315" width="74"  height="5" rx="2.5" fill="#6f7486"/>
+    <rect x="1062" y="331" width="62"  height="4" rx="2"   fill="#a3a7b4"/>
+
+    <rect x="1032" y="358" width="108" height="8" rx="4" fill="#262b38"/>
+    <rect x="1048" y="381" width="92"  height="5" rx="2.5" fill="#6f7486"/>
+    <rect x="1062" y="397" width="54"  height="4" rx="2"   fill="#a3a7b4"/>
+    <rect x="1062" y="411" width="70"  height="4" rx="2"   fill="#a3a7b4"/>
+  </g>
+  <text x="1032" y="448" font-family="DejaVu Sans Mono, monospace" font-size="15"
+        letter-spacing="3" fill="#9a9384">EPUB</text>
+
+  <!-- wordmark and copy -->
+  <text x="72" y="142" font-family="DejaVu Sans Mono, monospace" font-size="17"
+        letter-spacing="4.5" fill="#6e7689">CHROME EXTENSION · MANIFEST V3</text>
+
+  <text x="72" y="240" font-family="DejaVu Sans Mono, monospace" font-size="88"
+        font-weight="bold" fill="#f6f2e9">yuzu2epub</text>
+  <rect x="72" y="268" width="96" height="5" rx="2.5" fill="#f2c14e"/>
+
+  <text x="72" y="330" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="25" fill="#b9bfcd">
+    One button. A textbook you own becomes a single,
+  </text>
+  <text x="72" y="364" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="25" fill="#b9bfcd">
+    Kindle-ready EPUB with a table of contents that works.
+  </text>
+
+  <g font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="15" fill="#cbd1dd">
+    <rect x="72"  y="412" width="126" height="36" rx="18" fill="#171b26" stroke="#2b3243"/>
+    <text x="93"  y="435">nested TOC</text>
+    <rect x="210" y="412" width="150" height="36" rx="18" fill="#171b26" stroke="#2b3243"/>
+    <text x="231" y="435">images + cover</text>
+    <rect x="372" y="412" width="152" height="36" rx="18" fill="#171b26" stroke="#2b3243"/>
+    <text x="393" y="435">print page-list</text>
+    <rect x="536" y="412" width="140" height="36" rx="18" fill="#171b26" stroke="#2b3243"/>
+    <text x="557" y="435">no build step</text>
+  </g>
+
+  <text x="72" y="524" font-family="DejaVu Sans Mono, monospace" font-size="18" fill="#98a1b4">
+    github.com/mjshiggins/yuzu2epub
+  </text>
+  <text x="72" y="552" font-family="DejaVu Sans Mono, monospace" font-size="15" fill="#5c6474">
+    MIT · load unpacked · for books you have paid for
+  </text>
+</svg>
