@@ -34,7 +34,65 @@ importScripts(
 
 const CACHE_NAME = 'y2e-output';
 const CACHE_KEY = 'https://y2e.invalid/book.epub';
-const cacheKeyFor = (isbn) => `y2e_sections_${isbn || 'unknown'}`;
+
+/**
+ * Checkpoint storage.
+ *
+ * Sections are written in batches rather than as one growing blob. A textbook
+ * can run to 700+ sections, and rewriting the whole job every few sections is
+ * quadratic: it would move gigabytes over a single run. Each checkpoint now
+ * writes one batch plus a small header record.
+ */
+const BATCH_SIZE = 25;
+const jobKeyFor = (isbn) => `y2e_job_${isbn || 'unknown'}`;
+const batchKeyFor = (isbn, n) => `y2e_sec_${isbn || 'unknown'}_${n}`;
+
+async function saveHeader(isbn, header) {
+  await chrome.storage.local.set({ [jobKeyFor(isbn)]: header });
+}
+
+async function saveBatch(isbn, batchIndex, sections) {
+  const slice = sections.slice(batchIndex * BATCH_SIZE, (batchIndex + 1) * BATCH_SIZE);
+  await chrome.storage.local.set({ [batchKeyFor(isbn, batchIndex)]: slice });
+}
+
+async function loadJob(isbn) {
+  const headerKey = jobKeyFor(isbn);
+  const got = await chrome.storage.local.get(headerKey);
+  const header = got[headerKey];
+  if (!header) return null;
+
+  const batches = Math.ceil((header.count || 0) / BATCH_SIZE);
+  const keys = [];
+  for (let i = 0; i < batches; i++) keys.push(batchKeyFor(isbn, i));
+  const stored = keys.length ? await chrome.storage.local.get(keys) : {};
+  const sections = [];
+  for (const k of keys) {
+    const part = stored[k];
+    if (Array.isArray(part)) sections.push(...part);
+  }
+  // A missing batch means the checkpoint is torn; fall back to what is
+  // contiguous rather than assembling a book with holes in it.
+  if (sections.length !== (header.count || 0)) {
+    return { ...header, sections, torn: true };
+  }
+  return { ...header, sections };
+}
+
+async function clearJob(isbn) {
+  const headerKey = jobKeyFor(isbn);
+  const got = await chrome.storage.local.get(headerKey);
+  const header = got[headerKey];
+  const keys = [headerKey];
+  const batches = header ? Math.ceil((header.count || 0) / BATCH_SIZE) : 0;
+  for (let i = 0; i < batches; i++) keys.push(batchKeyFor(isbn, i));
+  // Sweep any orphaned batches from an earlier, longer run.
+  const all = await chrome.storage.local.get(null);
+  for (const k of Object.keys(all)) {
+    if (k.startsWith(`y2e_sec_${isbn || 'unknown'}_`)) keys.push(k);
+  }
+  await chrome.storage.local.remove([...new Set(keys)]);
+}
 
 const state = {
   status: 'idle', // idle | running | assembling | done | error
@@ -48,6 +106,7 @@ const state = {
   resumable: 0,
   resumableTotal: 0,
   resumableComplete: false,
+  etaMinutes: 0,
   cancelled: false,
 };
 
@@ -62,6 +121,16 @@ function warn(msg) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let runStartedAt = 0;
+let sectionsThisRun = 0;
+
+/** Minutes remaining, from the rate actually observed this run. */
+function estimateRemaining(done, total) {
+  if (!runStartedAt || sectionsThisRun < 3 || done >= total) return 0;
+  const perSection = (Date.now() - runStartedAt) / sectionsThisRun;
+  return Math.max(1, Math.round(((total - done) * perSection) / 60000));
+}
 
 function startKeepAlive() {
   chrome.alarms.create('y2e-keepalive', { periodInMinutes: 0.4 });
@@ -177,7 +246,7 @@ async function downloadBlob(blob, filename) {
 // ---------------------------------------------------------------------------
 const CHECKPOINT_EVERY = 3;
 
-async function extractBook(tabId, prior, key) {
+async function extractBook(tabId, prior, isbn) {
   setState({ phase: 'Reading table of contents' });
   await assertReaderAlive(tabId);
 
@@ -214,10 +283,18 @@ async function extractBook(tabId, prior, key) {
       : `Extracting ${toc.entries.length} sections`,
   });
 
+  // Writes one batch plus a small header, never the whole book.
   const save = async (nextIndex, complete) => {
     try {
-      await chrome.storage.local.set({
-        [key]: { meta, entries: toc.entries, sections, nextIndex, complete: !!complete },
+      const lastBatch = Math.max(0, Math.ceil(sections.length / BATCH_SIZE) - 1);
+      await saveBatch(isbn, lastBatch, sections);
+      await saveHeader(isbn, {
+        meta,
+        entries: toc.entries,
+        nextIndex,
+        complete: !!complete,
+        count: sections.length,
+        total: toc.entries.length,
       });
     } catch (err) {
       warn(`Could not checkpoint progress: ${err.message}`);
@@ -242,6 +319,7 @@ async function extractBook(tabId, prior, key) {
     setState({
       current: i + 1,
       phase: `Section ${i + 1} of ${toc.entries.length}: ${entry.title}`,
+      etaMinutes: estimateRemaining(i, toc.entries.length),
     });
 
     const nav = await runInTop(tabId, yuzuGotoSection, [entry.uuid]);
@@ -268,6 +346,16 @@ async function extractBook(tabId, prior, key) {
       warn(`"${entry.title}" extracted almost no text (${payload.textLength} chars).`);
     }
 
+    if (entry.path && payload.baseURI) {
+      // The TOC told us which document this entry lives in. If the reader gave
+      // us a different one, navigation raced and the content is wrong.
+      const want = entry.path.split('/').pop();
+      const got = payload.baseURI.split('?')[0].split('#')[0].split('/').pop();
+      if (want && got && want !== got) {
+        warn(`"${entry.title}" expected ${want} but extracted ${got}.`);
+      }
+    }
+
     const n = String(sections.length + 1).padStart(4, '0');
     sections.push({
       id: `sec-${n}`,
@@ -286,6 +374,7 @@ async function extractBook(tabId, prior, key) {
       hasSvg: !!payload.hasSvg,
     });
 
+    sectionsThisRun++;
     if ((i + 1) % CHECKPOINT_EVERY === 0) await save(i + 1, false);
   }
 
@@ -303,6 +392,8 @@ async function extractBook(tabId, prior, key) {
     }
   }
 
+  // Flush every batch, not just the last, so a resume can read them all back.
+  for (let b = 0; b * BATCH_SIZE < sections.length; b++) await saveBatch(isbn, b, sections);
   await save(toc.entries.length, true);
   return { meta, entries: toc.entries, sections, nextIndex: toc.entries.length, complete: true };
 }
@@ -357,21 +448,25 @@ async function runJob(tabId, { fresh = false } = {}) {
     cancelled: false,
   });
   startKeepAlive();
+  runStartedAt = Date.now();
+  sectionsThisRun = 0;
 
   const isbn = await currentIsbn(tabId);
-  const key = cacheKeyFor(isbn);
 
-  if (fresh) await chrome.storage.local.remove(key);
+  if (fresh) await clearJob(isbn);
 
   // Extraction is the expensive half. Reuse whatever a previous run banked:
   // a finished extraction skips straight to assembly, a partial one carries on
   // from the section it stopped at.
   let prior = null;
   if (!fresh) {
-    const stored = await chrome.storage.local.get(key);
-    if (stored[key] && stored[key].sections && stored[key].sections.length) {
-      prior = stored[key];
+    prior = await loadJob(isbn);
+    if (prior && prior.torn) {
+      warn(`Checkpoint was incomplete; resuming from section ${prior.sections.length + 1}.`);
+      prior.nextIndex = Math.min(prior.nextIndex || 0, prior.sections.length);
+      prior.complete = false;
     }
+    if (!prior || !prior.sections || !prior.sections.length) prior = null;
   }
 
   let job;
@@ -384,7 +479,7 @@ async function runJob(tabId, { fresh = false } = {}) {
       phase: `Reusing ${job.sections.length} sections extracted earlier`,
     });
   } else {
-    job = await extractBook(tabId, prior, key);
+    job = await extractBook(tabId, prior, isbn);
   }
 
   setState({ status: 'assembling', phase: 'Fetching images' });
@@ -395,7 +490,7 @@ async function runJob(tabId, { fresh = false } = {}) {
   setState({ phase: 'Saving' });
   await downloadBlob(result.blob, result.filename);
 
-  await chrome.storage.local.remove(key);
+  await clearJob(isbn);
   stopKeepAlive();
 
   setState({
@@ -415,14 +510,14 @@ async function runJob(tabId, { fresh = false } = {}) {
 
 async function refreshResumable(tabId) {
   const isbn = await currentIsbn(tabId);
-  const key = cacheKeyFor(isbn);
-  const stored = await chrome.storage.local.get(key);
-  const job = stored[key];
-  const n = job && job.sections ? job.sections.length : 0;
+  const headerKey = jobKeyFor(isbn);
+  const got = await chrome.storage.local.get(headerKey);
+  const header = got[headerKey];
+  const n = header ? header.count || 0 : 0;
   setState({
     resumable: n,
-    resumableTotal: job && job.entries ? job.entries.length : 0,
-    resumableComplete: !!(job && job.complete),
+    resumableTotal: header ? header.total || 0 : 0,
+    resumableComplete: !!(header && header.complete),
   });
   return n;
 }

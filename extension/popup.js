@@ -24,7 +24,10 @@ function render(s) {
     $('phase').textContent = s.phase || '';
     const pct = s.total ? Math.round((s.current / s.total) * 100) : 0;
     $('fill').style.width = `${s.status === 'assembling' ? 100 : pct}%`;
-    $('counter').textContent = s.total ? `${s.current} / ${s.total} sections` : '';
+    const eta = s.etaMinutes
+      ? `, about ${s.etaMinutes} min left`
+      : '';
+    $('counter').textContent = s.total ? `${s.current} / ${s.total} sections${eta}` : '';
   } else if (s.status === 'done') {
     show('finished');
     $('okmsg').textContent = `Saved ${s.filename}`;

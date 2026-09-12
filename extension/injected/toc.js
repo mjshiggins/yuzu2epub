@@ -12,10 +12,32 @@
  */
 
 /**
- * Read the full table of contents, expanding every collapsed Part first.
- * @returns {Promise<{error?: string, isbn?: string, title?: string,
- *                    authors?: string[], entries?: Array}>}
+ * The reader keeps each TOC entry's source document path on its React fiber.
+ * Having it up front lets the driver skip re-extracting a document two entries
+ * share, and lets it verify it landed on the document it asked for.
+ *
+ * Reading React internals is inherently fragile, so this returns '' on any
+ * change and every caller treats the path as optional.
  */
+function tocSourcePath(el) {
+  try {
+    const fk = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
+    if (!fk) return '';
+    let f = el[fk];
+    for (let i = 0; i < 14 && f; i++) {
+      const mp = f.memoizedProps;
+      if (mp && typeof mp === 'object') {
+        for (const k of ['toc', 'tocItem', 'item', 'node']) {
+          const o = mp[k];
+          if (o && typeof o === 'object' && typeof o.path === 'string' && o.path) return o.path;
+        }
+      }
+      f = f.return;
+    }
+  } catch (_) { /* React internals moved; carry on without it */ }
+  return '';
+}
+
 function tocPanelContains(control, tocRoot) {
   // Accept a control only if it and the TOC list share a near ancestor, which
   // keeps us inside the TOC panel and out of the reader's header menus.
@@ -27,6 +49,11 @@ function tocPanelContains(control, tocRoot) {
   return false;
 }
 
+/**
+ * Read the full table of contents, expanding every collapsed Part first.
+ * @returns {Promise<{error?: string, isbn?: string, title?: string,
+ *                    authors?: string[], entries?: Array}>}
+ */
 async function yuzuReadToc() {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -129,6 +156,7 @@ async function yuzuReadToc() {
         title: title.trim(),
         page,
         depth: depths[i] - minDepth,
+        path: tocSourcePath(b),
         isPart: !!(b.closest('li') && b.closest('li').querySelector('ul')),
       };
     });
@@ -143,13 +171,21 @@ async function yuzuReadToc() {
     if (docTitle) {
       const cands = Array.from(document.querySelectorAll('h1,h2,h3,h4,p,span,div'))
         .filter((e) => e.children.length === 0 && (e.textContent || '').trim() === docTitle);
+      // The byline may sit next to the title element or next to its parent,
+      // depending on how the panel header is built for a given book.
       for (const c of cands) {
-        const sib = c.parentElement && c.parentElement.nextElementSibling;
-        const txt = sib ? (sib.textContent || '').trim() : '';
-        if (txt && txt.length < 300 && txt !== docTitle) {
-          authors = txt.split(/;|·|•/).map((s) => s.trim()).filter(Boolean);
-          break;
+        const siblings = [
+          c.nextElementSibling,
+          c.parentElement && c.parentElement.nextElementSibling,
+        ];
+        for (const sib of siblings) {
+          const txt = sib ? (sib.textContent || '').trim() : '';
+          if (txt && txt.length < 300 && txt !== docTitle && !/Table of Contents/i.test(txt)) {
+            authors = txt.split(/;|·|•|,\s+(?=[A-Z])/).map((x) => x.trim()).filter(Boolean);
+            break;
+          }
         }
+        if (authors.length) break;
       }
     }
 

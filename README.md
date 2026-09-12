@@ -20,8 +20,14 @@ Press one button. The extension:
    for older readers and KDP, and a page-list mapped to the printed edition's
    page numbers.
 
-Expect **10 to 25 minutes** for a full textbook. The slow part is waiting for
-each section to render, which is unavoidable in this design (see below).
+Runtime depends entirely on how the publisher split the book, and the spread is
+large. One textbook tested here has 43 sections across two levels and takes
+minutes. Another has **741 sections across four levels** and takes well over an
+hour. The popup shows an estimate based on the rate actually observed, and
+progress is checkpointed continuously so a long run can be stopped and resumed.
+
+The slow part is waiting for each section to render, which is unavoidable in
+this design (see below).
 
 ## Install
 
@@ -176,7 +182,14 @@ the assistive MathML is used instead.
   page-break markers, "go to page" matches the print edition exactly. Where it
   does not, there is one entry per section.
 - **One section per TOC entry.** A book whose TOC omits content will omit it
-  here too.
+  here too. Entries that share a source document are extracted once.
+- **Cover art is fetched by the service worker** using its `covers.vitalsource.com`
+  host permission. That path could not be exercised outside the extension, so
+  it is the least verified part of the pipeline. A failure is non-fatal: the
+  book is built without a cover and the popup says so.
+- **`toc.path` comes from the reader's React internals**, which is inherently
+  fragile. It is only used to verify the driver landed on the document it asked
+  for, and everything degrades quietly if React's shape changes.
 - **Not run through epubcheck.** `test/validate_epub.py` checks OCF layout, XML
   well-formedness, manifest/spine/nav agreement and dangling references, which
   covers the realistic failure modes, but it is not a substitute.
